@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2025-01-10
+
+### Fixed
+- Fixed `get_wordnet_overview()` to handle None rowid and use correct lexicon string format for `get_modified()`
+- Fixed `mod_definition()` to query database directly instead of using `get_definitions()` which expects synset ID strings
+- Fixed `FormEditor.__init__()` to properly validate input types with elif and raise TypeError for invalid inputs
+- Fixed `add_syntactic_behaviour()` to check for None sense before calling SenseEditor
+- Fixed `set_relation_to_synset()` and `delete_relation_to_synset()` source/target parameter order
+- Fixed `delete_syntactic_behaviour()` missing `conn.commit()`
+- Fixed `delete_pronunciation()` to include `self.row_id` in query parameters
+- Fixed `create_sense()` to use keyword arguments when calling SenseEditor
+- Fixed `RelationType` enum values to match the actual wn database relation_types table (all 27 values corrected)
+
+### Added
+- Comprehensive test suite with 109 tests covering all editor functionality
+
 ## [0.6.0] - 2025-01-10
 
 ### Added

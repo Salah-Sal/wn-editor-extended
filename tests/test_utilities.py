@@ -72,23 +72,25 @@ class TestRelationType:
     """Tests for RelationType enum."""
 
     def test_relation_type_values(self):
-        """Test that RelationType has expected values."""
-        assert RelationType.antonym == 1
-        assert RelationType.hypernym == 7
-        assert RelationType.hyponym == 8
-        assert RelationType.similar == 28
+        """Test that RelationType has expected values matching wn database."""
+        # These values match the rowid in the relation_types table
+        assert RelationType.also == 1
+        assert RelationType.antonym == 2
+        assert RelationType.hypernym == 15
+        assert RelationType.hyponym == 16
+        assert RelationType.similar == 25
 
     def test_relation_type_complete(self):
-        """Test that all 28 relation types exist."""
+        """Test that all 27 relation types exist (matching wn database)."""
+        # Note: 'meronym' was removed as it's not in the wn database
         relation_names = [
-            "antonym", "causes", "derivation", "entails",
-            "holo_member", "holo_part", "hypernym", "hyponym",
-            "mero_member", "mero_part", "meronym", "pertainym",
-            "also", "attribute", "domain_region", "domain_topic",
-            "exemplifies", "has_domain_region", "has_domain_topic",
-            "holo_substance", "instance_hypernym", "instance_hyponym",
-            "is_caused_by", "is_entailed_by", "is_exemplified_by",
-            "mero_substance", "participle", "similar"
+            "also", "antonym", "attribute", "causes", "derivation",
+            "domain_region", "domain_topic", "entails", "exemplifies",
+            "has_domain_region", "has_domain_topic", "holo_member",
+            "holo_part", "holo_substance", "hypernym", "hyponym",
+            "instance_hypernym", "instance_hyponym", "is_exemplified_by",
+            "mero_member", "mero_part", "mero_substance", "participle",
+            "pertainym", "similar", "is_caused_by", "is_entailed_by"
         ]
 
         for name in relation_names:

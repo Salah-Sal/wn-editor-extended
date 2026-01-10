@@ -101,34 +101,37 @@ class IliStatus(IntEnum):
 
 
 class RelationType(IntEnum):
-    antonym = 1
-    causes = 2
-    derivation = 3
-    entails = 4
-    holo_member = 5
-    holo_part = 6
-    hypernym = 7
-    hyponym = 8
-    mero_member = 9
-    mero_part = 10
-    meronym = 11
-    pertainym = 12
-    also = 13
-    attribute = 14
-    domain_region = 15
-    domain_topic = 16
-    exemplifies = 17
-    has_domain_region = 18
-    has_domain_topic = 19
-    holo_substance = 20
-    instance_hypernym = 21
-    instance_hyponym = 22
-    is_caused_by = 23
-    is_entailed_by = 24
-    is_exemplified_by = 25
-    mero_substance = 26
-    participle = 27
-    similar = 28
+    """Relation types matching the wn package's relation_types table.
+
+    These values correspond to the rowid in the relation_types table.
+    """
+    also = 1
+    antonym = 2
+    attribute = 3
+    causes = 4
+    derivation = 5
+    domain_region = 6
+    domain_topic = 7
+    entails = 8
+    exemplifies = 9
+    has_domain_region = 10
+    has_domain_topic = 11
+    holo_member = 12
+    holo_part = 13
+    holo_substance = 14
+    hypernym = 15
+    hyponym = 16
+    instance_hypernym = 17
+    instance_hyponym = 18
+    is_exemplified_by = 19
+    mero_member = 20
+    mero_part = 21
+    mero_substance = 22
+    participle = 23
+    pertainym = 24
+    similar = 25
+    is_caused_by = 26
+    is_entailed_by = 27
 
 
 SET_MOD_QUERY = """
@@ -183,11 +186,18 @@ def get_wordnet_overview():
     """
     for lex in wn.lexicons():
         rowid = get_row_id("lexicons", {"id": lex.id, "version": lex.version})
+        if rowid is None:
+            print(f"{lex.id}:{lex.version}\t{lex.label}")
+            continue
 
+        # get_modified expects lexicon string like "ewn:2020", not rowid
+        lex_string = f"{lex.id}:{lex.version}"
+        modified = get_modified(lex_string)
+        artificial = get_artificial(rowid)
         print(
             f"{lex.id}:{lex.version}\t{lex.label}"
-            + ("\tModified" if get_modified(rowid) else "\t")
-            + ("\tArtificial" if get_artificial(rowid) else "\t")
+            + ("\tModified" if modified else "\t")
+            + ("\tArtificial" if artificial else "\t")
         )
 
 
@@ -531,7 +541,7 @@ class LexiconEditor(_Editor):
         """
         entry_edit = EntryEditor(entry_row_id) if entry_row_id else self.create_entry()
         synset_edit = SynsetEditor(synset) if synset else self.create_synset()
-        return SenseEditor(self.lex_rowid, entry_edit.entry_id, synset_edit.rowid)
+        return SenseEditor(lexicon_rowid=self.lex_rowid, entry_rowid=entry_edit.entry_id, synset_rowid=synset_edit.rowid)
 
     def create_entry(self) -> EntryEditor:
         """
@@ -553,17 +563,18 @@ class LexiconEditor(_Editor):
             self, syn_id: str, frame: str, sense: Optional[wn.Sense] = None
     ):
         """
-        Create a new Syntactic Behaviour. Can be passed a Sense to map it to
+        Create a new Syntactic Behaviour. Can be passed a Sense to map it to.
         """
         query = """
         INSERT INTO syntactic_behaviours VALUES (null,?,?,?)
         """
         with connect() as conn:
             conn.cursor().execute(query, (syn_id, self.lex_rowid, frame)).fetchall()
-            rowid = get_row_id(
-                "syntactic_behaviours", {"lexicon_rowid": self.lex_rowid, "id": syn_id}
-            )
-            SenseEditor(sense).add_syntactic_behaviour(rowid)
+            if sense is not None:
+                rowid = get_row_id(
+                    "syntactic_behaviours", {"lexicon_rowid": self.lex_rowid, "id": syn_id}
+                )
+                SenseEditor(sense).add_syntactic_behaviour(rowid)
             conn.commit()
 
     def delete_syntactic_behaviour(
@@ -596,6 +607,7 @@ class LexiconEditor(_Editor):
                 """
                 with connect() as conn:
                     conn.cursor().execute(query, (syn_id, self.lex_rowid, frame))
+                    conn.commit()
 
     def as_lexicon(self) -> wn.Lexicon:
         return wn.lexicons(lexicon=_get_lex_name_from_lex_id(self.lex_rowid))[0]
@@ -917,13 +929,14 @@ class SynsetEditor(_Editor):
     ) -> SynsetEditor:
         """
 
-        This method sets a relation to another synset. It can also be called with a string to automatically create a
+        This method sets a relation from this synset to another synset.
+        It can also be called with a string to automatically create a
         new synset to set the relation to.
 
         """
         if not isinstance(synset, Synset):
             synset = SynsetEditor(self.lex_rowid).add_word(synset).as_synset()
-        _set_relation_to_synset(synset, self.as_synset(), relation_type)
+        _set_relation_to_synset(self.as_synset(), synset, relation_type)
         return self
 
     @_modifies_db
@@ -932,7 +945,7 @@ class SynsetEditor(_Editor):
     ) -> SynsetEditor:
         """
 
-        This method deletes a relation to a synset.
+        This method deletes a relation from this synset to another synset.
         It can also be called with a string to delete the relation to all synsets which contain this word.
         (Potentially unsafe)
 
@@ -943,9 +956,9 @@ class SynsetEditor(_Editor):
                 f"Removing relation to ALL synsets wn can find with name '{synset}'"
             )
             for sset in wn.synsets(synset):
-                _remove_relation(sset, self.as_synset(), reltype)
+                _remove_relation(self.as_synset(), sset, reltype)
         else:
-            _remove_relation(synset, self.as_synset(), reltype)
+            _remove_relation(self.as_synset(), synset, reltype)
         return self
 
     @_modifies_db
@@ -1032,19 +1045,29 @@ class SynsetEditor(_Editor):
     def mod_definition(self, definition: str, indx: int = 0,
                        sense: Optional[wn.Sense] = None, language: Optional[str] = None,
                        metadata: Optional[Metadata] = None) -> SynsetEditor:
-        defs = get_definitions(self.rowid, [self.lex_rowid])
-        query = """
+        # Query definitions directly from DB using synset_rowid
+        get_defs_query = """
+        SELECT rowid FROM definitions
+        WHERE synset_rowid = ? AND lexicon_rowid = ?
+        ORDER BY rowid
+        """
+        update_query = """
         UPDATE definitions
         SET definition = ?
         WHERE rowid = ?
         """
-        if len(list(defs)) == 0:
-            self.add_definition(
-                definition, sense, language, metadata
-            )
-        else:
-            with connect() as conn:
-                conn.cursor().execute(query, (definition, list(defs)[indx][-1]))
+        with connect() as conn:
+            defs_rows = conn.cursor().execute(
+                get_defs_query, (self.rowid, self.lex_rowid)
+            ).fetchall()
+
+            if len(defs_rows) == 0:
+                # No definition exists, add a new one
+                self.add_definition(definition, sense, language, metadata)
+            else:
+                # Update existing definition
+                def_rowid = defs_rows[indx][0]
+                conn.cursor().execute(update_query, (definition, def_rowid))
                 conn.commit()
         return self
 
@@ -1654,13 +1677,15 @@ class FormEditor(_Editor):
         ...
 
     def __init__(self, inp: int | wn.Form) -> None:
-        if isinstance(inp, wn.Form):
+        if isinstance(inp, wn.Form) and hasattr(inp, '_id') and inp._id is not None:
             self.row_id = inp._id
             super(FormEditor, self).__init__(self._get_lex_id_from_rowid(self.row_id))
-        if isinstance(inp, int):
+        elif isinstance(inp, int):
             self.entry_id = inp
             super(FormEditor, self).__init__(self._get_lex_id_from_entry(self.entry_id))
             self.row_id = self._create()
+        else:
+            raise TypeError(f"expected int (entry_id) or wn.Form with _id attribute, got {type(inp).__name__}")
 
     def _get_lex_id_from_rowid(self, row_id) -> int:
         with connect() as conn:
@@ -1789,13 +1814,13 @@ class FormEditor(_Editor):
         """
         logger.warning("Deletion of pronunciations is potentially unsafe (no primary key)")
         query = """
-        
-        DELETE from pronunciations WHERE form_rowid = ? and value = ? and variety = ? and notation = ? and phonemic = ? 
+
+        DELETE from pronunciations WHERE form_rowid = ? and value = ? and variety = ? and notation = ? and phonemic = ?
         and audio = ?
-        
+
         """
         with connect() as conn:
-            data = (pronunciation, variety, notation, phonemic, audio)
+            data = (self.row_id, pronunciation, variety, notation, phonemic, audio)
             conn.cursor().execute(query, data)
             conn.commit()
 
