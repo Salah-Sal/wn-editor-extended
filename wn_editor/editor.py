@@ -4,10 +4,13 @@ import inspect
 from enum import IntEnum
 from typing import overload, Optional, Any
 
+import logging
+
 import wn
 from wn import Synset
-from wn._add import logger
 from wn._db import connect
+
+logger = logging.getLogger(__name__)
 from wn._queries import get_modified, get_definitions
 from wn.lmf import (
     Metadata,
@@ -32,12 +35,12 @@ def get_row_id(table, arg: dict[str, Any]) -> int:
         res = conn.cursor().execute(query, tuple(ar)).fetchall()
         if res is not None:
             if len(res) > 1:
-                logger.warn(
+                logger.warning(
                     "More then one rowid returned while matching rowids "
                     "(thats probably coused by duplicate IDs in the same lexicon"
                 )
             elif len(res) < 1:
-                logger.warn("No rowid returned while searching for rowids")
+                logger.warning("No rowid returned while searching for rowids")
             else:
                 if res[0] is not None:
                     return res[0][0]
@@ -936,7 +939,7 @@ class SynsetEditor(_Editor):
 
         """
         if isinstance(synset, str):
-            logger.warn(
+            logger.warning(
                 f"Removing relation to ALL synsets wn can find with name '{synset}'"
             )
             for sset in wn.synsets(synset):
@@ -1784,7 +1787,7 @@ class FormEditor(_Editor):
         Warning: This is potentially unsafe since there exists no primary key for pronunciations.
 
         """
-        logger.warn("Deletion of pronunciations is potentially unsafe (no primary key)")
+        logger.warning("Deletion of pronunciations is potentially unsafe (no primary key)")
         query = """
         
         DELETE from pronunciations WHERE form_rowid = ? and value = ? and variety = ? and notation = ? and phonemic = ? 
