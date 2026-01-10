@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from enum import IntEnum
 from typing import overload, Optional, Any
-
-import logging
 
 import wn
 from wn import Synset
 from wn._db import connect
+from wn._queries import get_modified
+from wn.lmf import Metadata
 
 logger = logging.getLogger(__name__)
-from wn._queries import get_modified, get_definitions
-from wn.lmf import (
-    Metadata,
-)
 
 
 # Utils
