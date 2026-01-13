@@ -610,6 +610,21 @@ class LexiconEditor(_Editor):
                     conn.cursor().execute(query, (syn_id, self.lex_rowid, frame))
                     conn.commit()
 
+    @_modifies_db
+    def delete(self) -> None:
+        """
+        Delete this lexicon from the database.
+
+        Warning:
+            This will delete the lexicon and all its associated data
+            (synsets, senses, entries, forms, relations, etc.).
+            This operation cannot be undone.
+        """
+        # Get lexicon info for wn.remove()
+        lex = self.as_lexicon()
+        specifier = f"{lex.id}:{lex.version}"
+        wn.remove(specifier)
+
     def as_lexicon(self) -> wn.Lexicon:
         return wn.lexicons(lexicon=_get_lex_name_from_lex_id(self.lex_rowid))[0]
 
@@ -704,6 +719,27 @@ class IlIEditor(_Editor):
         """
         with connect() as conn:
             conn.cursor().execute(query, (meta, self.row_id))
+            conn.commit()
+
+    @_modifies_db
+    def delete(self) -> None:
+        """
+        Delete this ILI from the database.
+
+        Warning:
+            This will also remove the ILI reference from any synsets
+            that were linked to it. This operation cannot be undone.
+        """
+        # First, unlink any synsets that reference this ILI
+        unlink_query = """
+        UPDATE synsets SET ili_rowid = NULL WHERE ili_rowid = ?
+        """
+        delete_query = """
+        DELETE FROM ilis WHERE rowid = ?
+        """
+        with connect() as conn:
+            conn.cursor().execute(unlink_query, (self.row_id,))
+            conn.cursor().execute(delete_query, (self.row_id,))
             conn.commit()
 
     def as_ili(self) -> wn.ILI:
@@ -1043,6 +1079,25 @@ class SynsetEditor(_Editor):
         return self
 
     @_modifies_db
+    def set_metadata(self, metadata: Metadata) -> SynsetEditor:
+        """
+        Set the metadata for this synset.
+
+        Args:
+            metadata: A dictionary of metadata key-value pairs.
+
+        Returns:
+            self for method chaining
+        """
+        query = """
+        UPDATE synsets SET metadata = ? WHERE rowid = ?
+        """
+        with connect() as conn:
+            conn.cursor().execute(query, (metadata, self.rowid))
+            conn.commit()
+        return self
+
+    @_modifies_db
     def mod_definition(self, definition: str, indx: int = 0,
                        sense: Optional[wn.Sense] = None, language: Optional[str] = None,
                        metadata: Optional[Metadata] = None) -> SynsetEditor:
@@ -1099,6 +1154,37 @@ class SynsetEditor(_Editor):
         with connect() as conn:
             conn.cursor().execute(query, data)
             conn.commit()
+        return self
+
+    @_modifies_db
+    def delete_definition(self, indx: int = 0) -> SynsetEditor:
+        """
+        Delete a definition from this synset.
+
+        Args:
+            indx: The index of the definition to delete (0-based).
+                  Defaults to 0 (first definition).
+
+        Returns:
+            self for method chaining
+        """
+        get_defs_query = """
+        SELECT rowid FROM definitions
+        WHERE synset_rowid = ? AND lexicon_rowid = ?
+        ORDER BY rowid
+        """
+        delete_query = """
+        DELETE FROM definitions WHERE rowid = ?
+        """
+        with connect() as conn:
+            defs_rows = conn.cursor().execute(
+                get_defs_query, (self.rowid, self.lex_rowid)
+            ).fetchall()
+
+            if defs_rows and indx < len(defs_rows):
+                def_rowid = defs_rows[indx][0]
+                conn.cursor().execute(delete_query, (def_rowid,))
+                conn.commit()
         return self
 
     @_modifies_db
@@ -1307,6 +1393,25 @@ class SenseEditor(_Editor):
             conn.cursor().execute(query, (new_id, self.row_id))
             conn.commit()
             return self
+
+    @_modifies_db
+    def set_metadata(self, metadata: Metadata) -> SenseEditor:
+        """
+        Set the metadata for this sense.
+
+        Args:
+            metadata: A dictionary of metadata key-value pairs.
+
+        Returns:
+            self for method chaining
+        """
+        query = """
+        UPDATE senses SET metadata = ? WHERE rowid = ?
+        """
+        with connect() as conn:
+            conn.cursor().execute(query, (metadata, self.row_id))
+            conn.commit()
+        return self
 
     @_modifies_db
     def delete(self) -> None:
@@ -1590,6 +1695,25 @@ class EntryEditor(_Editor):
         with connect() as conn:
             cur = conn.cursor()
             cur.execute(query, (pos, self.entry_id))
+            conn.commit()
+        return self
+
+    @_modifies_db
+    def set_metadata(self, metadata: Metadata) -> EntryEditor:
+        """
+        Set the metadata for this entry.
+
+        Args:
+            metadata: A dictionary of metadata key-value pairs.
+
+        Returns:
+            self for method chaining
+        """
+        query = """
+        UPDATE entries SET metadata = ? WHERE rowid = ?
+        """
+        with connect() as conn:
+            conn.cursor().execute(query, (metadata, self.entry_id))
             conn.commit()
         return self
 
