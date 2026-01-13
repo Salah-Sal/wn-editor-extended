@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-01-13
+
+### Added
+- **Change tracking system** - New `changelog` module for recording all database modifications
+  - `enable_tracking()` / `disable_tracking()` - Control change tracking
+  - `tracking_session()` - Context manager for grouping related changes
+  - `start_session()` / `end_session()` - Manual session management
+  - `get_session_history()` - Query past sessions with change counts
+  - `get_changes()` - Query change history with filtering options
+  - `get_change_by_id()` - Retrieve specific change details
+- **Per-change rollback** - Undo individual or grouped changes
+  - `rollback_change()` - Undo a single INSERT, UPDATE, or DELETE operation
+  - `rollback_session()` - Undo all changes in a session (reverse order)
+  - `can_rollback()` - Check if a change can be rolled back
+- **History maintenance**
+  - `prune_history()` - Delete old change records
+- **Hook system** for integrating change tracking with editors
+  - `set_changelog_hooks()` / `clear_changelog_hooks()` in `editor` module
+- New `Session` and `Change` dataclasses for type-safe history access
+- Separate changelog database (`~/.wn_changelog.db`) to avoid modifying WordNet schema
+- 25 new tests for changelog functionality
+
 ## [0.6.1] - 2025-01-10
 
 ### Fixed

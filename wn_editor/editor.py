@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 from enum import IntEnum
 from typing import overload, Optional, Any
 
@@ -13,6 +14,9 @@ from wn.lmf import Metadata
 
 logger = logging.getLogger(__name__)
 
+# Thread-local storage for changelog hooks
+_changelog_hooks = threading.local()
+
 # Constants
 ARTIFICIAL_LEXICON_MARKER = "_.artificial"
 """Marker string used to identify programmatically created lexicons."""
@@ -20,12 +24,58 @@ ARTIFICIAL_LEXICON_MARKER = "_.artificial"
 
 # Utils
 def _mod_internal(f, *args, **kw):
-    args[0].set_modified()
-    return f(*args, **kw)
+    """Internal function called by @_modifies_db decorator.
+
+    Handles:
+    1. Marking the lexicon as modified
+    2. Calling changelog pre/post hooks if tracking is enabled
+    """
+    editor = args[0]
+    editor.set_modified()
+
+    # Call pre-hook if registered (for change tracking)
+    pre_hook = getattr(_changelog_hooks, 'pre_hook', None)
+    pre_context = None
+    if pre_hook:
+        try:
+            pre_context = pre_hook(editor, f.__name__, args, kw)
+        except Exception as e:
+            logger.debug(f"Changelog pre-hook error: {e}")
+
+    result = f(*args, **kw)
+
+    # Call post-hook if registered (for change tracking)
+    post_hook = getattr(_changelog_hooks, 'post_hook', None)
+    if post_hook:
+        try:
+            post_hook(editor, f.__name__, args, kw, result, pre_context)
+        except Exception as e:
+            logger.debug(f"Changelog post-hook error: {e}")
+
+    return result
 
 
 def _modifies_db(func):
     return _dec(func, _mod_internal)
+
+
+def set_changelog_hooks(pre_hook=None, post_hook=None):
+    """Install changelog hooks for change tracking.
+
+    Args:
+        pre_hook: Function called before each modifying operation.
+                  Signature: (editor, method_name, args, kwargs) -> context
+        post_hook: Function called after each modifying operation.
+                   Signature: (editor, method_name, args, kwargs, result, context) -> None
+    """
+    _changelog_hooks.pre_hook = pre_hook
+    _changelog_hooks.post_hook = post_hook
+
+
+def clear_changelog_hooks():
+    """Remove changelog hooks."""
+    _changelog_hooks.pre_hook = None
+    _changelog_hooks.post_hook = None
 
 
 def get_row_id(table, arg: dict[str, Any]) -> int:
