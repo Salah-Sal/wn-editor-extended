@@ -13,6 +13,10 @@ from wn.lmf import Metadata
 
 logger = logging.getLogger(__name__)
 
+# Constants
+ARTIFICIAL_LEXICON_MARKER = "_.artificial"
+"""Marker string used to identify programmatically created lexicons."""
+
 
 # Utils
 def _mod_internal(f, *args, **kw):
@@ -33,8 +37,8 @@ def get_row_id(table, arg: dict[str, Any]) -> int:
         if res is not None:
             if len(res) > 1:
                 logger.warning(
-                    "More then one rowid returned while matching rowids "
-                    "(thats probably coused by duplicate IDs in the same lexicon"
+                    "More than one rowid returned while matching rowids "
+                    "(this is probably caused by duplicate IDs in the same lexicon)"
                 )
             elif len(res) < 1:
                 logger.warning("No rowid returned while searching for rowids")
@@ -150,7 +154,7 @@ def get_artificial(rowid: int) -> bool:
     with connect() as conn:
         res = conn.cursor().execute(query, (rowid,)).fetchall()
         if res and res[0] and res[0][0] is not None and "note" in dict(res[0][0]):
-            return "_.artificial" in dict(res[0][0])["note"]
+            return ARTIFICIAL_LEXICON_MARKER in dict(res[0][0])["note"]
         else:
             return False
 
@@ -198,7 +202,7 @@ def get_wordnet_overview():
         )
 
 
-def _get_valid_sense_id(entry_id: int, form: str = "unkown") -> str:
+def _get_valid_sense_id(entry_id: int, form: str = "unknown") -> str:
     get_all_sense_id_of_entry_query = """
     
     SELECT max(cast(replace(id,?,'') as unsigned)) FROM senses WHERE entry_rowid = ? and  id like ?
@@ -475,9 +479,9 @@ class LexiconEditor(_Editor):
         if "note" in metadata:
             metadata["note"] = (
                                    metadata["note"] if metadata["note"] else ""
-                               ) + " _.artificial"
+                               ) + f" {ARTIFICIAL_LEXICON_MARKER}"
         else:
-            metadata["note"] = " _.artificial"
+            metadata["note"] = f" {ARTIFICIAL_LEXICON_MARKER}"
         with connect() as conn:
             data = (
                 lex_id,
@@ -1392,15 +1396,21 @@ class SenseEditor(_Editor):
         return self
 
     @_modifies_db
-    def delete_adjposition(self, adjposition) -> SenseEditor:
+    def delete_adjposition(self, adjposition: str) -> SenseEditor:
         """
-        Deletes an adjposition of the sense
+        Deletes an adjposition of the sense.
+
+        Args:
+            adjposition: The adjposition string to delete (e.g., 'a', 'p', 'ip')
+
+        Returns:
+            self for method chaining
         """
         query = """
-        DELETE from adjpositions WHERE sense_rowid = ? and adjposition = ?
+        DELETE FROM adjpositions WHERE sense_rowid = ? AND adjposition = ?
         """
         with connect() as conn:
-            conn.cursor().execute(query, adjposition)
+            conn.cursor().execute(query, (self.row_id, adjposition))
             conn.commit()
         return self
 
