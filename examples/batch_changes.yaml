@@ -1,0 +1,119 @@
+# Example Batch Change Request for wn-editor-extended
+#
+# This file demonstrates the YAML format for submitting bulk changes
+# to a WordNet database.
+#
+# Usage:
+#   wn-batch validate examples/batch_changes.yaml
+#   wn-batch apply examples/batch_changes.yaml --dry-run
+#   wn-batch apply examples/batch_changes.yaml
+
+# Target lexicon (must be installed via `wn.download()`)
+lexicon: ewn
+
+# Optional session metadata for tracking
+session:
+  name: "Add technology terms"
+  description: "Adding modern technology terminology to English WordNet"
+
+# List of changes to apply
+changes:
+  # ============================================
+  # CREATE SYNSET - Create new synset with words
+  # ============================================
+  - operation: create_synset
+    words:
+      - word: blockchain
+        pos: n
+      - word: distributed ledger
+    definition: "A decentralized, distributed digital ledger that records transactions across many computers"
+    examples:
+      - "Bitcoin uses blockchain technology to record transactions."
+      - "The company implemented a blockchain solution for supply chain tracking."
+    # Optional: add relations to existing synsets
+    relations:
+      hypernym:
+        - ewn-06590210-n  # database
+
+  # ============================================
+  # ADD WORD - Add word to existing synset
+  # ============================================
+  - operation: add_word
+    synset: ewn-06590210-n  # database synset
+    word: datastore
+    pos: n  # optional POS
+
+  # ============================================
+  # ADD DEFINITION - Add definition to synset
+  # ============================================
+  - operation: add_definition
+    synset: ewn-06590210-n
+    definition: "A system for storing and retrieving digital information"
+
+  # ============================================
+  # ADD EXAMPLE - Add usage example
+  # ============================================
+  - operation: add_example
+    synset: ewn-06590210-n
+    example: "The application stores user data in a relational database."
+
+  # ============================================
+  # ADD RELATION - Create relation between synsets
+  # ============================================
+  - operation: add_relation
+    source: ewn-06590210-n  # database
+    target: ewn-06566077-n  # computer science
+    type: domain_topic
+
+  # ============================================
+  # SET POS - Set part of speech
+  # ============================================
+  - operation: set_pos
+    synset: ewn-06590210-n
+    pos: n  # n=noun, v=verb, a=adjective, r=adverb, s=satellite adj
+
+  # ============================================
+  # SET ILI - Link synset to Interlingual Index
+  # ============================================
+  - operation: set_ili
+    synset: ewn-06590210-n
+    ili: i78456  # ILI identifier
+
+# ============================================
+# NOTES ON RELATION TYPES
+# ============================================
+# Supported relation types (use string names, not IDs):
+#
+# Hierarchical:
+#   hypernym (15)      - more general concept
+#   hyponym (16)       - more specific concept
+#   instance_hypernym (17) - instance of
+#   instance_hyponym (18)  - has instance
+#
+# Part-whole:
+#   holo_member (12)   - member holonym
+#   holo_part (13)     - part holonym
+#   holo_substance (14)- substance holonym
+#   mero_member (22)   - member meronym
+#   mero_part (23)     - part meronym
+#   mero_substance (24)- substance meronym
+#
+# Semantic:
+#   also (1)           - see also
+#   antonym (2)        - opposite meaning
+#   attribute (3)      - attribute relation
+#   similar (28)       - similar to
+#
+# Domain:
+#   domain_region (6)  - domain (region)
+#   domain_topic (7)   - domain (topic)
+#   has_domain_region (10)
+#   has_domain_topic (11)
+#
+# Other:
+#   causes (4)         - causal relation
+#   entails (8)        - entailment
+#   derivation (5)     - derivational relation
+#   exemplifies (9)    - exemplification
+#   pertainym (27)     - pertains to
+#   participle (26)    - participle

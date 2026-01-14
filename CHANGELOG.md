@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-01-13
 
 ### Added
+- **Batch change request system** - New `batch` module for submitting bulk WordNet modifications via YAML
+  - `load_change_request()` - Load changes from YAML file, string, or dict
+  - `validate_change_request()` - Validate schema and referential integrity
+  - `execute_change_request()` - Apply changes with optional dry-run mode
+  - 13 supported operations: `create_synset`, `add_word`, `delete_word`, `add_definition`, `modify_definition`, `delete_definition`, `add_example`, `delete_example`, `set_pos`, `add_relation`, `delete_relation`, `set_ili`, `delete_ili`
+  - 28 relation types supported with user-friendly names (e.g., `hypernym` instead of ID `15`)
+  - Full integration with change tracking for rollback support
+- **`wn-batch` CLI tool** - Command-line interface for batch operations
+  - `wn-batch validate <file>` - Validate a YAML change request
+  - `wn-batch apply <file>` - Apply changes (with `--dry-run`, `--yes` options)
+  - `wn-batch history` - View execution history
+  - `wn-batch rollback <session_id>` - Rollback a batch session
+  - `wn-batch show <session_id>` - Show session details
 - **Change tracking system** - New `changelog` module for recording all database modifications
   - `enable_tracking()` / `disable_tracking()` - Control change tracking
   - `tracking_session()` - Context manager for grouping related changes

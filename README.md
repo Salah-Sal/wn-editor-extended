@@ -14,15 +14,19 @@ This is an extended fork of [wn-editor](https://github.com/Hypercookie/wn-editor
 - **Create synsets** with words, definitions, and relations
 - **Set part-of-speech** on synsets and entries
 - **Manage relations** (hypernyms, hyponyms, etc.)
+- **Batch change requests** - Submit bulk modifications via YAML files
 - **Change tracking and rollback** - Track all modifications and undo them
+- **CLI tools** - Command-line interface for batch operations
 - **Full compatibility** with the `wn` package
 
 ### Enhancements over original wn-editor
 
 - `SynsetEditor.set_pos()` - Set part of speech on synsets
 - `SynsetEditor.add_word(word, pos=None)` - Add words with optional POS
+- **Batch change request system** - Submit bulk changes via YAML with validation
 - **Change tracking system** - Record all database modifications with session-based grouping
 - **Per-change rollback** - Undo individual changes or entire sessions
+- **`wn-batch` CLI** - Command-line tool for batch operations
 - Fixed form creation to set `rank=0` (required for `wn.synsets()` to find new terms)
 - Fixed various edge cases in ID generation
 
@@ -94,6 +98,106 @@ new_synset = synset_editor.as_synset()
 hypernym = wn.synset('ewn-06590830-n')  # software synset
 _set_relation_to_synset(new_synset, hypernym, 15)
 ```
+
+## Batch Change Requests
+
+Submit bulk modifications via YAML files with validation and rollback support:
+
+### YAML Format
+
+```yaml
+# changes.yaml
+lexicon: ewn
+session:
+  name: "Add new terms"
+  description: "Adding blockchain terminology"
+
+changes:
+  - operation: create_synset
+    words:
+      - word: blockchain
+        pos: n
+    definition: "A decentralized digital ledger technology"
+    examples:
+      - "Bitcoin uses blockchain technology"
+
+  - operation: add_word
+    synset: ewn-06590210-n
+    word: cryptocurrency
+
+  - operation: add_relation
+    source: ewn-NEW-SYNSET-n
+    target: ewn-06590210-n
+    type: hypernym
+```
+
+### Python API
+
+```python
+from wn_editor.batch import (
+    load_change_request,
+    validate_change_request,
+    execute_change_request,
+)
+
+# Load from YAML file
+request = load_change_request("changes.yaml")
+
+# Validate before execution
+validation = validate_change_request(request)
+if not validation.is_valid:
+    for error in validation.errors:
+        print(f"Error: {error.message}")
+
+# Execute with change tracking
+result = execute_change_request(request)
+print(f"Applied {result.success_count}/{result.total_count} changes")
+
+# Or dry run first
+result = execute_change_request(request, dry_run=True)
+```
+
+### CLI Tool
+
+```bash
+# Validate a change request
+wn-batch validate changes.yaml
+
+# Apply changes (with confirmation)
+wn-batch apply changes.yaml
+
+# Apply without confirmation
+wn-batch apply changes.yaml --yes
+
+# Dry run (preview without applying)
+wn-batch apply changes.yaml --dry-run
+
+# View history
+wn-batch history
+
+# Rollback a session
+wn-batch rollback <session_id>
+```
+
+### Supported Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `create_synset` | Create new synset with words and definition |
+| `add_word` | Add word to existing synset |
+| `delete_word` | Remove word from synset |
+| `add_definition` | Add definition to synset |
+| `modify_definition` | Change existing definition |
+| `delete_definition` | Remove definition |
+| `add_example` | Add usage example |
+| `delete_example` | Remove example |
+| `set_pos` | Set part of speech |
+| `add_relation` | Create relation between synsets |
+| `delete_relation` | Remove relation |
+| `set_ili` | Link synset to Interlingual Index |
+| `delete_ili` | Remove ILI link |
+
+See [docs/batch-change-request-spec.md](docs/batch-change-request-spec.md) for full documentation.
 
 ## Change Tracking and Rollback
 
@@ -201,6 +305,7 @@ prune_history(days: int = 30) -> int  # Delete old changes
 
 - Python 3.9+
 - wn >= 0.9.1
+- PyYAML >= 6.0
 
 ## Acknowledgments
 

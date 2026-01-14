@@ -1,4 +1,4 @@
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 from .editor import (
     LexiconEditor as LexiconEditor,
@@ -37,7 +37,12 @@ from .changelog import (
     prune_history as prune_history,
 )
 
+# Batch module - import as submodule to avoid naming conflicts
+from . import batch
+
 __all__ = [
+    # Batch module
+    "batch",
     # Editor classes
     "LexiconEditor",
     "SynsetEditor",

@@ -34,7 +34,11 @@ classifiers = [
 keywords = ["wn", "wordnet", "editor", "nlp", "lexicon"]
 dependencies = [
     "wn>=0.9.1",
+    "PyYAML>=6.0",
 ]
+
+[project.scripts]
+wn-batch = "wn_editor.batch.cli:main"
 
 [project.optional-dependencies]
 dev = [
