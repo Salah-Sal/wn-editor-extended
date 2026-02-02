@@ -273,6 +273,31 @@ class ChangelogDB:
                 sessions.append(Session.from_row(row, count))
             return sessions
 
+    def get_unclosed_session(self) -> Optional[Session]:
+        """Get the most recent unclosed session (ended_at IS NULL).
+
+        This is useful for recovering session state across process invocations,
+        where thread-local storage is lost but the database retains the session.
+
+        Returns:
+            The most recent session with ended_at=NULL, or None if all sessions are closed.
+        """
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                """SELECT * FROM sessions
+                   WHERE ended_at IS NULL AND rolled_back = 0
+                   ORDER BY id DESC LIMIT 1"""
+            )
+            row = cur.fetchone()
+            if row:
+                count_cur = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM changes WHERE session_id = ?",
+                    (row["id"],)
+                )
+                count = count_cur.fetchone()["cnt"]
+                return Session.from_row(row, count)
+            return None
+
     def mark_change_rolled_back(self, change_id: int) -> None:
         """Mark a change as rolled back."""
         with self._get_connection() as conn:
@@ -359,14 +384,30 @@ def start_session(name: str = None, description: str = None) -> Session:
     return session
 
 
-def end_session(session_id: int = None) -> None:
-    """End a tracking session."""
+def end_session(session_id: int = None) -> bool:
+    """End a tracking session.
+
+    Args:
+        session_id: The session ID to end. If not provided, ends the active
+            session (from thread-local storage) or falls back to the most
+            recent unclosed session in the database.
+
+    Returns:
+        True if a session was ended, False if no session was found to end.
+    """
     if session_id is None:
         active = get_active_session()
         if active:
             session_id = active.id
         else:
-            return
+            # Fall back to querying the database for unclosed sessions
+            # This handles the case where session state was lost (e.g., across
+            # separate process invocations)
+            unclosed = get_most_recent_unclosed_session()
+            if unclosed:
+                session_id = unclosed.id
+            else:
+                return False
 
     _get_db().end_session(session_id)
 
@@ -375,6 +416,23 @@ def end_session(session_id: int = None) -> None:
         _set_active_session(None)
 
     logger.debug(f"Ended session {session_id}")
+    return True
+
+
+def get_most_recent_unclosed_session() -> Optional[Session]:
+    """Get the most recent unclosed session from the database.
+
+    This is useful for recovering session state across process invocations,
+    where thread-local storage is lost but the database retains the session
+    information.
+
+    Returns:
+        The most recent session with ended_at=NULL, or None if all sessions
+        are closed or rolled back.
+    """
+    if not _tracking_enabled:
+        enable_tracking()
+    return _get_db().get_unclosed_session()
 
 
 @contextmanager

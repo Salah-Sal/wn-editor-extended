@@ -35,6 +35,7 @@ from .changelog import (
     rollback_session as rollback_session,
     can_rollback as can_rollback,
     prune_history as prune_history,
+    get_most_recent_unclosed_session as get_most_recent_unclosed_session,
 )
 
 # Batch module - import as submodule to avoid naming conflicts
@@ -80,4 +81,5 @@ __all__ = [
     "rollback_session",
     "can_rollback",
     "prune_history",
+    "get_most_recent_unclosed_session",
 ]

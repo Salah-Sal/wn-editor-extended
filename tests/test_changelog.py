@@ -22,6 +22,7 @@ from wn_editor import (
     rollback_session,
     can_rollback,
     prune_history,
+    get_most_recent_unclosed_session,
     Session,
     Change,
 )
@@ -30,6 +31,8 @@ from wn_editor.changelog import (
     _get_db,
     pre_change_hook,
     post_change_hook,
+    _set_active_session,
+    get_active_session,
 )
 from wn_editor.editor import set_changelog_hooks, clear_changelog_hooks
 
@@ -450,3 +453,141 @@ class TestEdgeCases:
         # Non-existent ID
         missing = get_change_by_id(99999)
         assert missing is None
+
+
+class TestUnclosedSessionRecovery:
+    """Tests for unclosed session recovery (cross-process session state)."""
+
+    def test_get_unclosed_session_from_db(self, temp_changelog_db):
+        """Test that ChangelogDB.get_unclosed_session() finds unclosed sessions."""
+        db = ChangelogDB(temp_changelog_db)
+
+        # Create a session but don't end it
+        session = db.create_session("Unclosed Test", "Testing unclosed session")
+
+        # Should find the unclosed session
+        unclosed = db.get_unclosed_session()
+        assert unclosed is not None
+        assert unclosed.id == session.id
+        assert unclosed.name == "Unclosed Test"
+        assert unclosed.ended_at is None
+
+    def test_get_unclosed_session_returns_none_when_all_closed(self, temp_changelog_db):
+        """Test that get_unclosed_session returns None when all sessions are closed."""
+        db = ChangelogDB(temp_changelog_db)
+
+        # Create and end a session
+        session = db.create_session("Closed Test")
+        db.end_session(session.id)
+
+        # Should return None
+        unclosed = db.get_unclosed_session()
+        assert unclosed is None
+
+    def test_get_unclosed_session_returns_most_recent(self, temp_changelog_db):
+        """Test that get_unclosed_session returns the most recent unclosed session."""
+        db = ChangelogDB(temp_changelog_db)
+
+        # Create multiple unclosed sessions
+        session1 = db.create_session("First Unclosed")
+        session2 = db.create_session("Second Unclosed")
+        session3 = db.create_session("Third Unclosed")
+
+        # Should return the most recent (highest ID)
+        unclosed = db.get_unclosed_session()
+        assert unclosed is not None
+        assert unclosed.id == session3.id
+        assert unclosed.name == "Third Unclosed"
+
+    def test_get_unclosed_session_ignores_rolled_back(self, temp_changelog_db):
+        """Test that get_unclosed_session ignores rolled back sessions."""
+        db = ChangelogDB(temp_changelog_db)
+
+        # Create a session and mark it as rolled back
+        session1 = db.create_session("Rolled Back")
+        db.mark_session_rolled_back(session1.id)
+
+        # Create another unclosed session
+        session2 = db.create_session("Not Rolled Back")
+
+        # Should return the non-rolled-back session
+        unclosed = db.get_unclosed_session()
+        assert unclosed is not None
+        assert unclosed.id == session2.id
+
+    def test_get_most_recent_unclosed_session_public_api(self, clean_tracking_state, temp_changelog_db):
+        """Test the public get_most_recent_unclosed_session function."""
+        enable_tracking(temp_changelog_db)
+
+        # Create a session but don't end it
+        session = start_session("Public API Test")
+
+        # Clear thread-local state to simulate new process
+        _set_active_session(None)
+        assert get_active_session() is None
+
+        # Should still find the session via database query
+        unclosed = get_most_recent_unclosed_session()
+        assert unclosed is not None
+        assert unclosed.id == session.id
+
+        # Clean up
+        end_session(session.id)
+
+    def test_end_session_without_id_finds_unclosed(self, clean_tracking_state, temp_changelog_db):
+        """Test that end_session() without ID finds and ends unclosed session."""
+        enable_tracking(temp_changelog_db)
+
+        # Create a session
+        session = start_session("Auto-find Test")
+        session_id = session.id
+
+        # Clear thread-local state to simulate new process
+        _set_active_session(None)
+        assert get_active_session() is None
+
+        # end_session() without ID should find and end the unclosed session
+        result = end_session()
+        assert result is True
+
+        # Verify session was ended
+        db = ChangelogDB(temp_changelog_db)
+        ended = db.get_session(session_id)
+        assert ended.ended_at is not None
+
+    def test_end_session_returns_false_when_no_session(self, clean_tracking_state, temp_changelog_db):
+        """Test that end_session() returns False when no session exists."""
+        enable_tracking(temp_changelog_db)
+
+        # Clear any active session
+        _set_active_session(None)
+
+        # No sessions exist, should return False
+        result = end_session()
+        assert result is False
+
+    def test_end_session_prefers_thread_local_over_db(self, clean_tracking_state, temp_changelog_db):
+        """Test that end_session() prefers thread-local session over DB lookup."""
+        enable_tracking(temp_changelog_db)
+
+        # Create two sessions - one old unclosed, one current
+        db = ChangelogDB(temp_changelog_db)
+        old_session = db.create_session("Old Unclosed")
+
+        # Start a new session (sets thread-local)
+        new_session = start_session("Current Session")
+
+        # end_session() should end the thread-local session, not the old one
+        result = end_session()
+        assert result is True
+
+        # Verify the new session was ended
+        updated_new = db.get_session(new_session.id)
+        assert updated_new.ended_at is not None
+
+        # Old session should still be unclosed
+        updated_old = db.get_session(old_session.id)
+        assert updated_old.ended_at is None
+
+        # Clean up
+        db.end_session(old_session.id)
