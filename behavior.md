@@ -30,7 +30,7 @@ This document defines "what happens when..." for every scenario the editor can e
 8. Delete the synset row from `synsets`
 9. Record `edit_history` entries for each deleted entity
 
-**Note**: SQLite CASCADE DELETE handles most of this automatically. Steps 1–2 (inverse relation cleanup) require explicit handling before the CASCADE.
+**Implementation note**: Steps 1–2 (inverse relation cleanup) and step 9 (history logging) require explicit handling. The implementation must **pre-fetch all child entity IDs** (senses, relations, definitions, examples) into Python memory BEFORE issuing the parent DELETE, so that `edit_history` entries can be written accurately. SQLite CASCADE DELETE handles the actual row removal for steps 3–8 after the pre-fetch and history recording.
 
 ### RULE-DEL-003: Delete entry with `cascade=False` (default)
 

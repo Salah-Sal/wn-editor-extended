@@ -287,6 +287,14 @@ entry = editor.create_entry("awn", "قطة", "n", forms=["قطط"])
 
 **Raises**: `EntityNotFoundError` if entry doesn't exist.
 
+### `update_lemma(entry_id: str, new_lemma: str)`
+
+**Description**: Update the written form of an entry's lemma (rank=0 form). Also updates `entry_index.lemma` and `forms.normalized_form`.
+
+**Raises**: `EntityNotFoundError` if entry doesn't exist.
+
+**Post-conditions**: The lemma form is updated. If the entry's ID was auto-generated from the lemma (per RULE-ID-002), the ID is NOT changed — IDs are stable (RULE-ID-005). Edit history records the change.
+
 ---
 
 ## 3.5 — Sense Operations
@@ -358,15 +366,15 @@ entry = editor.create_entry("awn", "قطة", "n", forms=["قطط"])
 **Description**: Update the text of a specific definition.
 
 **Parameters**:
-- `definition_index` — 0-based index into the synset's definitions (ordered by insertion).
+- `definition_index` — 0-based index into the synset's definitions, ordered by `rowid ASC` (insertion order). This ordering is deterministic even after deletions because SQLite rowids are monotonically increasing.
 
-**Raises**: `IndexError` if index out of range.
+**Raises**: `IndexError` if index out of range. `EntityNotFoundError` if synset doesn't exist.
 
 ### `remove_definition(synset_id: str, definition_index: int)`
 
-**Description**: Remove a definition from a synset.
+**Description**: Remove a definition from a synset. Remaining definitions retain their rowid-based ordering; subsequent indexes shift down.
 
-**Raises**: `IndexError` if index out of range.
+**Raises**: `IndexError` if index out of range. `EntityNotFoundError` if synset doesn't exist.
 
 ### `add_synset_example(synset_id: str, text: str, *, language: str | None = None, metadata: dict | None = None)`
 
