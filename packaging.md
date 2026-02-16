@@ -169,7 +169,7 @@ from wordnet_editor.exceptions import (
     DuplicateEntityError,
     RelationError,
     ConflictError,
-    ImportError,
+    DataImportError,
     ExportError,
     DatabaseError,
 )
@@ -201,7 +201,7 @@ __all__ = [
     # Exceptions
     "WordnetEditorError", "ValidationError", "EntityNotFoundError",
     "DuplicateEntityError", "RelationError", "ConflictError",
-    "ImportError", "ExportError", "DatabaseError",
+    "DataImportError", "ExportError", "DatabaseError",
     # Constants
     "SYNSET_RELATION_INVERSES", "SENSE_RELATION_INVERSES",
 ]

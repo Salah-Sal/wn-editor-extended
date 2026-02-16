@@ -30,19 +30,20 @@ editor = WordnetEditor("my_wordnet.db")
 editor = WordnetEditor()  # in-memory
 ```
 
-### `WordnetEditor.from_wn(lexicon: str, db_path: str | Path = ":memory:") -> WordnetEditor`
+### `WordnetEditor.from_wn(lexicon: str, db_path: str | Path = ":memory:", *, record_history: bool = True) -> WordnetEditor`
 
 **Description**: Create an editor database pre-populated with data from the `wn` library's database.
 
 **Parameters**:
 - `lexicon` — Lexicon specifier string (e.g., `"ewn:2024"`, `"omw-en31:1.4"`). Must match a lexicon in `wn`'s database.
 - `db_path` — Path for the editor database.
+- `record_history` — If True (default), record CREATE entries in `edit_history` for each imported entity. Set to False for large bulk imports to improve performance.
 
 **Returns**: A new `WordnetEditor` instance with the imported data.
 
 **Raises**:
 - `EntityNotFoundError` — If the lexicon specifier doesn't match any lexicon in `wn`.
-- `ImportError` — If the import fails.
+- `DataImportError` — If the import fails.
 
 **Pre-conditions**: The specified lexicon must be installed in `wn` (via `wn.download()` or `wn.add()`).
 
@@ -55,19 +56,20 @@ wn.download("ewn:2024")
 editor = WordnetEditor.from_wn("ewn:2024", "ewn_edit.db")
 ```
 
-### `WordnetEditor.from_lmf(source: str | Path, db_path: str | Path = ":memory:") -> WordnetEditor`
+### `WordnetEditor.from_lmf(source: str | Path, db_path: str | Path = ":memory:", *, record_history: bool = True) -> WordnetEditor`
 
 **Description**: Create an editor database pre-populated from a WN-LMF XML file.
 
 **Parameters**:
 - `source` — Path to a WN-LMF XML file.
 - `db_path` — Path for the editor database.
+- `record_history` — If True (default), record CREATE entries in `edit_history` for each imported entity. Set to False for large bulk imports to improve performance.
 
 **Returns**: A new `WordnetEditor` instance with the imported data.
 
 **Raises**:
 - `FileNotFoundError` — If the source file doesn't exist.
-- `ImportError` — If the XML is malformed or fails validation.
+- `DataImportError` — If the XML is malformed or fails validation.
 
 **Example**:
 ```python
@@ -127,6 +129,14 @@ with WordnetEditor("my.db") as editor:
 ### `list_lexicons() -> list[LexiconModel]`
 
 **Description**: List all lexicons in the editor database.
+
+### `delete_lexicon(lexicon_id: str)`
+
+**Description**: Delete a lexicon and all its owned entities. See RULE-DEL-007.
+
+**Raises**: `EntityNotFoundError` if lexicon doesn't exist.
+
+**Post-conditions**: All owned synsets, entries, senses, forms, relations, definitions, examples, and related data are removed via CASCADE DELETE. Cross-lexicon relations pointing to deleted entities are also removed. A single edit history entry is recorded.
 
 ---
 
@@ -271,6 +281,12 @@ entry = editor.create_entry("awn", "قطة", "n", forms=["قطط"])
 
 **Raises**: `EntityNotFoundError` if entry or form doesn't exist. `ValidationError` if attempting to remove the lemma.
 
+### `get_forms(entry_id: str) -> list[FormModel]`
+
+**Description**: Retrieve all forms for an entry, ordered by rank (lemma first).
+
+**Raises**: `EntityNotFoundError` if entry doesn't exist.
+
 ---
 
 ## 3.5 — Sense Operations
@@ -319,6 +335,15 @@ entry = editor.create_entry("awn", "قطة", "n", forms=["قطط"])
 **Description**: Retrieve a sense by ID.
 
 **Raises**: `EntityNotFoundError` if no sense with the given ID exists.
+
+### `find_senses(*, entry_id: str | None = None, synset_id: str | None = None, lexicon_id: str | None = None) -> list[SenseModel]`
+
+**Description**: Search for senses matching criteria. At least one filter parameter should be provided.
+
+**Parameters**:
+- `entry_id` — Filter by owning entry.
+- `synset_id` — Filter by referenced synset.
+- `lexicon_id` — Filter by owning lexicon.
 
 ---
 
@@ -527,7 +552,7 @@ editor.add_synset_relation("awn-00001-n", "hypernym", "awn-00002-n")
 **Description**: Add data from a WN-LMF XML file into the editor database. See RULE-IMPORT-001 through RULE-IMPORT-003.
 
 **Raises**:
-- `ImportError` — If the XML is malformed.
+- `DataImportError` — If the XML is malformed.
 - `DuplicateEntityError` — If a lexicon with same `(id, version)` already exists.
 
 ### `export_lmf(destination: str | Path, *, lexicon_ids: list[str] | None = None)`

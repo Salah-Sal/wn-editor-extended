@@ -12,8 +12,8 @@ All validation rules the editor checks, organized by entity type. Each rule has 
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| ERROR | 7 | Must be fixed before export. Indicates broken data. |
-| WARNING | 16 | Should be reviewed. May indicate issues but doesn't block export. |
+| ERROR | 6 | Must be fixed before export. Indicates broken data. |
+| WARNING | 17 | Should be reviewed. May indicate issues but doesn't block export. |
 
 ---
 
@@ -55,7 +55,7 @@ All validation rules the editor checks, organized by entity type. Each rule has 
 | VAL-REL-002 | WARNING | Relation | Relation type is invalid for the source and target entity types. E.g., a synset relation type used in a sense relation, or vice versa. | `wn/validate.py` W402 |
 | VAL-REL-003 | WARNING | Relation | Redundant relation: identical relation (same source, type, and target) appears more than once. | `wn/validate.py` W403 |
 | VAL-REL-004 | WARNING | Relation | Reverse relation is missing. An asymmetric relation exists without its expected inverse. | `wn/validate.py` W404 |
-| VAL-REL-005 | ERROR | Relation | Self-loop: a relation's source and target are the same entity. | Editor policy (stricter than `wn` W502) |
+| VAL-REL-005 | ERROR | Relation | Self-loop: a relation's source and target are the same entity. **Import note**: `wn` databases with existing self-loops (W502) will have them skipped with a warning during import, since the editor prevents self-loops at insertion time. | Editor policy (stricter than `wn` W502) |
 
 ### Graph & Taxonomy (500 series)
 
@@ -68,7 +68,7 @@ All validation rules the editor checks, organized by entity type. Each rule has 
 | Rule ID | Severity | Entity | Description | Source |
 |---------|----------|--------|-------------|--------|
 | VAL-EDT-001 | ERROR | All | Entity ID does not start with the owning lexicon's ID prefix followed by `-`. | Editor policy (RULE-ID-004) |
-| VAL-EDT-002 | ERROR | Synset | Synset has no definitions. | Editor policy |
+| VAL-EDT-002 | WARNING | Synset | Synset has no definitions. Note: definition-less synsets are valid WN-LMF, so this is advisory, not blocking. | Editor policy |
 | VAL-EDT-003 | WARNING | Sense | Sense has confidence score below 0.5. | Editor policy |
 
 ---

@@ -191,7 +191,8 @@ CREATE TABLE synsets (
     ili_rowid INTEGER REFERENCES ilis (rowid),
     pos TEXT,
     lexfile_rowid INTEGER REFERENCES lexfiles (rowid),
-    metadata META
+    metadata META,
+    UNIQUE (id, lexicon_rowid)
 );
 CREATE INDEX synset_id_index ON synsets (id);
 CREATE INDEX synset_ili_rowid_index ON synsets (ili_rowid);
@@ -207,7 +208,8 @@ CREATE TABLE synset_relations (
     source_rowid INTEGER NOT NULL REFERENCES synsets(rowid) ON DELETE CASCADE,
     target_rowid INTEGER NOT NULL REFERENCES synsets(rowid) ON DELETE CASCADE,
     type_rowid INTEGER NOT NULL REFERENCES relation_types(rowid),
-    metadata META
+    metadata META,
+    UNIQUE (source_rowid, target_rowid, type_rowid)
 );
 CREATE INDEX synset_relation_source_index ON synset_relations (source_rowid);
 CREATE INDEX synset_relation_target_index ON synset_relations (target_rowid);
@@ -263,7 +265,8 @@ CREATE TABLE sense_relations (
     source_rowid INTEGER NOT NULL REFERENCES senses(rowid) ON DELETE CASCADE,
     target_rowid INTEGER NOT NULL REFERENCES senses(rowid) ON DELETE CASCADE,
     type_rowid INTEGER NOT NULL REFERENCES relation_types(rowid),
-    metadata META
+    metadata META,
+    UNIQUE (source_rowid, target_rowid, type_rowid)
 );
 CREATE INDEX sense_relation_source_index ON sense_relations (source_rowid);
 CREATE INDEX sense_relation_target_index ON sense_relations (target_rowid);
@@ -274,7 +277,8 @@ CREATE TABLE sense_synset_relations (
     source_rowid INTEGER NOT NULL REFERENCES senses(rowid) ON DELETE CASCADE,
     target_rowid INTEGER NOT NULL REFERENCES synsets(rowid) ON DELETE CASCADE,
     type_rowid INTEGER NOT NULL REFERENCES relation_types(rowid),
-    metadata META
+    metadata META,
+    UNIQUE (source_rowid, target_rowid, type_rowid)
 );
 CREATE INDEX sense_synset_relation_source_index ON sense_synset_relations (source_rowid);
 CREATE INDEX sense_synset_relation_target_index ON sense_synset_relations (target_rowid);
@@ -333,7 +337,7 @@ CREATE INDEX syntactic_behaviour_sense_sense_index
 ```sql
 CREATE TABLE edit_history (
     rowid INTEGER PRIMARY KEY,
-    entity_type TEXT NOT NULL,
+    entity_type TEXT NOT NULL CHECK( entity_type IN ('lexicon','synset','entry','sense','relation','definition','example','form','ili') ),
     entity_id TEXT NOT NULL,
     field_name TEXT,
     operation TEXT NOT NULL CHECK( operation IN ('CREATE', 'UPDATE', 'DELETE') ),

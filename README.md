@@ -48,7 +48,7 @@ with WordnetEditor("my_edits.db") as editor:
     editor.add_sense(entry_id=entry.id, synset_id=ss.id)
 
     # Add relations (inverse auto-created)
-    editor.add_synset_relation(ss.id, other_ss.id, "hypernym")
+    editor.add_synset_relation(ss.id, "hypernym", other_ss.id)
 
     # Merge two synsets atomically
     editor.merge_synsets(source_id=ss1.id, target_id=ss2.id)

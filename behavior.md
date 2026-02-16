@@ -161,7 +161,7 @@ All `synset_relations` where `source_rowid` is `source` are updated to originate
 
 ### RULE-MERGE-004: Definition merge
 
-Definitions from `source` are appended to `target`'s definitions. Duplicate definition texts are skipped.
+Definitions from `source` are appended to `target`'s definitions. Duplicate definition texts are skipped. Two definitions are considered duplicates if their text matches exactly after stripping leading and trailing whitespace.
 
 ### RULE-MERGE-005: Example merge
 
@@ -267,6 +267,10 @@ Where `synset_local_part` is the synset ID with the lexicon prefix removed, and 
 ### RULE-ID-004: ID prefix validation
 
 All entity IDs (synset, entry, sense) MUST begin with the owning lexicon's `id` followed by `-`. If a user-provided ID violates this, raise `ValidationError("ID must start with lexicon prefix: {lexicon_id}-")`.
+
+### RULE-ID-005: IDs are stable identifiers
+
+Entity IDs are assigned at creation time and never change, even if the entity's properties change. For example, if a synset's POS is changed from `n` to `v` via `update_synset()`, its ID (which may contain `-n` as a suffix per RULE-ID-001) is NOT regenerated. The POS component in the ID is a creation-time artifact, not a live reflection of current state.
 
 ---
 

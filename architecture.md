@@ -8,7 +8,7 @@
 
 ## 1.1 — System Overview
 
-`wordnet-editor` is a pip-installable pure Python library that provides a complete programmatic API for editing WordNets. It maintains its own independent SQLite database — never mutating the `wn` library's store — and supports all CRUD operations on synsets, lexical entries, senses, definitions, examples, and relations. The library automatically maintains inverse relations, supports compound operations (merge, split, move), includes a validation engine, tracks edit history, and exports valid WN-LMF 1.4 XML that can be re-imported into `wn`. It targets single-user batch editing workflows.
+`wordnet-editor` is a pip-installable pure Python library that provides a complete programmatic API for editing WordNets. It maintains its own independent SQLite database — never mutating the `wn` library's store — and supports all CRUD operations on synsets, lexical entries, senses, definitions, examples, and relations. The library automatically maintains inverse relations, supports compound operations (merge, split, move), includes a validation engine, tracks edit history, and exports valid WN-LMF 1.4 XML that can be re-imported into `wn`. It targets single-user batch editing workflows. `WordnetEditor` instances are not thread-safe — use one instance per thread. If two processes open the same `editor.db`, SQLite's file-level locking ensures writes are serialized (the second writer blocks until the first commits).
 
 ---
 
@@ -228,7 +228,7 @@ WordnetEditorError (base)
 ├── DuplicateEntityError     # Entity with same ID already exists
 ├── RelationError            # Relation constraint violation (e.g., delete with references)
 ├── ConflictError            # Conflicting state (e.g., both synsets have ILI in merge)
-├── ImportError              # Failed to import data (malformed XML, etc.)
+├── DataImportError              # Failed to import data (malformed XML, etc.)
 ├── ExportError              # Failed to export (validation errors in output)
 └── DatabaseError            # Schema version mismatch, connection failure
 ```

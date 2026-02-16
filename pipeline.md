@@ -208,13 +208,15 @@ INSERT INTO sense_examples VALUES (null, :lexicon_rowid, :sense_rowid,
     :text, :language, :metadata)
 ```
 
-**Step 13: Record edit history**
+**Step 13: Record edit history** (optional, controlled by `record_history` parameter)
 
 For each entity inserted, record a CREATE entry:
 ```sql
 INSERT INTO edit_history (entity_type, entity_id, operation, new_value)
 VALUES (:type, :id, 'CREATE', :json_summary)
 ```
+
+**Performance note**: For large WordNets (e.g., OEWN ~120K synsets), history recording during import can double the number of rows written. The `import_lmf()` and `import_from_wn()` methods accept a `record_history: bool = True` parameter. Set to `False` for bulk imports where import provenance is not needed.
 
 ### Foreign Key Resolution Order
 
@@ -377,7 +379,7 @@ with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
     temp_path = tmp.name
 ```
 
-This includes validation (Step 7 of 6.3). If export fails validation, `ExportError` is raised and the `wn` database is untouched.
+This includes validation (Step 7 of 6.3). If export fails validation, `ExportError` is raised and the `wn` database is untouched. **Validation MUST pass before proceeding** — Step 3 is only reached if Step 2 succeeds without error.
 
 **Step 3: Remove existing lexicons from wn** (if they exist)
 ```python

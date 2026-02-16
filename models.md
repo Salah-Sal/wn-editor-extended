@@ -73,11 +73,11 @@ class SenseModel:
     entry_id: str              # Owning entry ID
     synset_id: str             # Referenced synset ID
     lexicon_id: str            # Owning lexicon ID
-    entry_rank: int            # Rank within entry (1-based)
-    synset_rank: int           # Rank within synset (1-based)
+    entry_rank: int            # Positional ordering within entry (1-based, derived from XML element order)
+    synset_rank: int           # Positional ordering within synset (1-based, from synset members attribute)
     lexicalized: bool          # Whether this sense is lexicalized
     adjposition: str | None    # Adjective position ("a", "ip", "p") or None
-    n: int | None              # Sense number for ordering within index
+    n: int | None              # WN-LMF sense number hint (explicit `n` attribute, distinct from entry_rank)
     metadata: dict | None      # Dublin Core metadata
 ```
 
@@ -262,7 +262,7 @@ class AdjPosition(str, Enum):
 
 ### SynsetRelationType
 
-All valid synset relation type strings. Source: `wn/wn/constants.py` lines 67–155 (`SYNSET_RELATIONS` frozenset, 68 members).
+All valid synset relation type strings. Source: `wn/wn/constants.py` lines 67–155 (`SYNSET_RELATIONS` frozenset, 85 members).
 
 ```python
 class SynsetRelationType(str, Enum):
@@ -529,7 +529,9 @@ This map is used by both synset relations and sense relations. Relation types th
 | `augmentative` | `has_augmentative` |
 | `has_augmentative` | `augmentative` |
 | `metaphor` | `has_metaphor` |
+| `has_metaphor` | `metaphor` |
 | `metonym` | `has_metonym` |
+| `has_metonym` | `metonym` |
 
 ### Symmetric relations (map to themselves)
 

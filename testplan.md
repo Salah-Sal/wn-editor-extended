@@ -48,7 +48,7 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 ### TP-INIT-008: from_lmf with invalid XML
 - **Setup**: Malformed XML file
 - **Action**: `WordnetEditor.from_lmf("bad.xml")`
-- **Verify**: Raises `ImportError`
+- **Verify**: Raises `DataImportError`
 
 ---
 
