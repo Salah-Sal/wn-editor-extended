@@ -239,13 +239,70 @@ Note: `definitions.sense_rowid` references senses, so definitions must be insert
 
 ## 6.2 — Import from `wn` Database
 
-### Pipeline
+### Pipeline (dual-path)
 
 ```
-wn DB → wn.export() → temp WN-LMF XML → XML import pipeline (6.1)
+wn DB ──┬── [fast path] wn._db.connect() → bulk SQL → LexicalResource dict ──┐
+        │                                                                      ├→ editor DB
+        └── [fallback]  wn.export() → temp XML → wn.lmf.load() ──────────────┘
 ```
 
-### Step-by-step
+The importer tries the fast path first, falling back to the XML path if `wn`'s internal schema has changed.
+
+### Fast Path: Bulk SQL Loading
+
+**Adopted from**: `wn_edit`'s `_load_from_database_bulk()` pattern, which reduces OEWN import time from ~140s to ~10s by executing ~20 bulk SELECT queries instead of serializing to XML.
+
+**Step 1: Open connection to `wn`'s database**
+```python
+try:
+    from wn._db import connect
+    conn = connect()
+except (ImportError, AttributeError):
+    return self._import_from_wn_xml(specifier)  # fallback
+```
+
+**Step 2: Fetch lexicon metadata**
+```sql
+SELECT rowid, id, label, language, email, license, version, url, citation, logo
+FROM lexicons WHERE specifier = :specifier
+```
+
+**Step 3: Bulk-fetch all entity rows** (~20 queries)
+
+For the matched lexicon, execute one SELECT per entity table:
+- `entries` (with `entry_index` join)
+- `forms` (ordered by `entry_rowid, rank`)
+- `pronunciations`, `tags`
+- `synsets` (with `ilis` and `lexfiles` joins)
+- `senses` (with `adjpositions` join)
+- `sense_relations`, `sense_synset_relations`, `sense_examples`, `counts`
+- `synset_relations`, `definitions`, `synset_examples`
+- `unlexicalized_synsets`, `unlexicalized_senses`
+- `proposed_ilis`
+- `syntactic_behaviours`, `syntactic_behaviour_senses`
+- `lexicon_dependencies`
+
+Each query fetches all rows for the lexicon in a single round-trip.
+
+**Step 4: Assemble `LexicalResource` dict in Python**
+
+Group rows by parent entity (e.g., forms by entry_rowid, senses by entry_rowid) and construct `wn.lmf`-compatible TypedDicts. This is the same dict structure used by the XML path.
+
+**Step 5: Insert into editor DB**
+
+Pass the assembled `LexicalResource` dict to the same insertion logic used by `import_lmf()` (section 6.1, steps 2–13).
+
+**Step 6: Apply metadata overrides** (if provided)
+
+If the caller passed override parameters (`version`, `label`, etc.), update the lexicon row:
+```sql
+UPDATE lexicons SET version = :version, label = :label, ... WHERE rowid = :lexicon_rowid
+```
+
+### Fallback Path: XML Round-Trip
+
+If the bulk path fails (schema mismatch, private API removed), fall back to the original approach:
 
 **Step 1: Export from `wn` to temp file**
 ```python
@@ -268,7 +325,13 @@ self.import_lmf(temp_path)
 os.unlink(temp_path)
 ```
 
-**Rationale for this approach vs. direct DB query**: Using `wn.export()` leverages `wn`'s own tested export logic, guaranteeing that all data (including extensions, metadata, syntactic behaviours) is captured correctly. Direct DB querying would require reimplementing `wn/_export.py`'s logic.
+### Rationale for the dual-path approach
+
+The fast path uses `wn._db.connect()` — a private API that may change between `wn` releases. The fallback ensures forward compatibility. The fast path is worth the coupling because:
+- OEWN has ~120K synsets; the 14x speedup (10s vs 140s) is significant for interactive workflows
+- The fallback is always available and tested
+- Schema changes in `wn` are caught by `try/except` around SQL queries
+- `wn_edit` has validated this pattern in production
 
 ---
 
@@ -334,10 +397,23 @@ For each synset in lexicon:
 **Step 5: Assemble resource**
 ```python
 resource = lmf.LexicalResource(
-    lmf_version="1.4",
+    lmf_version=lmf_version,  # default "1.4", caller-configurable
     lexicons=[lex1, lex2, ...]
 )
 ```
+
+**LMF version awareness**: The `lmf_version` parameter defaults to `"1.4"` (latest). If the caller requests a lower version, certain data may be silently dropped by `wn.lmf.dump()`:
+
+| Data | Requires LMF | Dropped at ≤ |
+|------|-------------|-------------|
+| `lexfile` | ≥1.1 | 1.0 |
+| `count` | ≥1.1 | 1.0 |
+| `logo` | ≥1.1 | 1.0 |
+| `frames` (lexicon-level) | ≥1.1 | 1.0 |
+| `members` (synset) | ≥1.1 | 1.0 |
+| `index` (entry) | ≥1.4 | 1.1 |
+
+If `lmf_version` < `"1.1"` and the data contains `lexfile` or `count` values, a `WARNING` is logged (not raised) to alert the caller that data will be lost in the export.
 
 **Step 6: Write XML**
 ```python
@@ -445,5 +521,8 @@ The following data MUST survive import → edit → export without loss:
 
 **Not preserved** (intentionally):
 - XML formatting, whitespace, and comments
-- DOCTYPE version (always exports as 1.4)
 - Element ordering within XML (may differ from original but is semantically equivalent)
+
+**Conditionally preserved** (depends on `lmf_version` parameter):
+- LMF version string: defaults to `"1.4"` but can be set to match the original via `export_lmf(..., lmf_version="1.1")`
+- Data requiring LMF ≥1.1 (`lexfile`, `count`, `logo`, `frames`, `members`): preserved at default `"1.4"`, dropped if caller explicitly requests `"1.0"`

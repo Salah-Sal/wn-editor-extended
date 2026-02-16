@@ -432,6 +432,62 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 - **Action**: `import_lmf("same_lexicon.xml")`
 - **Verify**: Raises `DuplicateEntityError`
 
+### TP-RT-006: Minimal-diff fidelity test
+- **Setup**: Import a large WordNet (e.g., OEWN) via `from_wn("ewn:2024")`
+- **Action**: Change only the version string via `update_lexicon(lexicon_id, version="2024-test")`, then `export_lmf("out.xml")`
+- **Verify**: XML diff between original and exported is only the version string and specifier. All synsets, entries, senses, relations, definitions, examples, ILI mappings, pronunciations, tags, counts, lexfile names, and metadata are preserved byte-for-byte.
+- **Marker**: `@pytest.mark.slow` (requires large WordNet download)
+
+### TP-RT-007: Add/remove cycle fidelity test
+- **Setup**: Import fixture XML. Record original state by exporting to `original.xml`.
+- **Action**: Add a synset with senses and relations. Then delete the synset with `cascade=True`. Export to `roundtrip.xml`.
+- **Verify**: `roundtrip.xml` is semantically equivalent to `original.xml` (same synsets, entries, senses, relations after normalization).
+
+### TP-RT-008: Bulk SQL vs XML import equivalence
+- **Setup**: A lexicon installed in `wn`'s database.
+- **Action**: Import via bulk SQL path (`_import_from_wn_bulk`), export to `bulk.xml`. Import via XML fallback path (`_import_from_wn_xml`), export to `xml.xml`.
+- **Verify**: Both XML files are semantically equivalent (same entity IDs, same relations, same definitions, same metadata). This validates that the fast path produces identical results to the reference implementation.
+- **Marker**: `@pytest.mark.slow`
+
+### TP-RT-009: Export with lmf_version="1.0" drops data
+- **Setup**: Editor with synsets that have `lexfile` and senses with `count` values.
+- **Action**: `export_lmf("out.xml", lmf_version="1.0")`
+- **Verify**: Exported XML has no `lexfile` or `count` data. A warning was logged about data loss.
+
+### TP-RT-010: Export with lmf_version="1.4" preserves data
+- **Setup**: Same as TP-RT-009.
+- **Action**: `export_lmf("out.xml", lmf_version="1.4")`
+- **Verify**: Exported XML has `lexfile` and `count` data intact.
+
+---
+
+## Post-Commit Integration Tests
+
+### TP-INTEG-001: Committed synsets queryable via `wn`
+- **Setup**: Create synsets, entries, senses, relations. Call `commit_to_wn()`.
+- **Action**: `wn.synsets(id=synset_id)`, `wn.words()`, `wn.senses()`
+- **Verify**: All committed entities are queryable via `wn`'s public API.
+
+### TP-INTEG-002: Committed relations navigable via `wn` graph methods
+- **Setup**: Create hypernym chain A → B → C. Call `commit_to_wn()`.
+- **Action**: Query `wn.synsets(id=A_id)[0].relations("hypernym")` and `wn.synsets(id=A_id)[0].hypernym_paths()`
+- **Verify**: Relations are navigable. `hypernym_paths()` returns path `[A, B, C]`.
+
+### TP-INTEG-003: Committed ILI mappings survive
+- **Setup**: Create synset with `ili="i90287"`. Call `commit_to_wn()`.
+- **Action**: `wn.synsets(id=synset_id)[0].ili`
+- **Verify**: Returns `"i90287"`.
+
+### TP-INTEG-004: Commit replaces existing lexicon cleanly
+- **Setup**: `commit_to_wn()` an initial version. Modify a definition. `commit_to_wn()` again.
+- **Action**: Query the modified synset via `wn`.
+- **Verify**: Updated definition visible. No duplicate lexicon entries in `wn`.
+
+### TP-INTEG-005: from_wn with metadata overrides
+- **Setup**: `wn.download("ewn:2024")` (or fixture).
+- **Action**: `WordnetEditor.from_wn("ewn:2024", version="2024-custom", label="My EWN")`
+- **Verify**: `editor.get_lexicon(lexicon_id).version == "2024-custom"`. `editor.get_lexicon(lexicon_id).label == "My EWN"`. Original data (synsets, entries, senses) fully preserved.
+
 ---
 
 ## Change Tracking

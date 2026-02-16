@@ -579,6 +579,7 @@ CREATE INDEX edit_history_timestamp_index ON edit_history (timestamp);
 | Retained all `wn` tables and indexes exactly | Maximizes compatibility. The editor DB is structurally identical to `wn`'s DB for entity storage, making import/export a direct row-copy operation |
 | `META` column type retained | Uses same `json.dumps`/`json.loads` adapter/converter pattern as `wn` |
 | No `updated_at` columns added | Change tracking is handled by `edit_history` table instead, avoiding schema divergence from `wn` |
+| `edit_history` has no `session_id` column (v1.0) | Reserved for v2.0+. A future `session_id TEXT` column would group changes into editing sessions, enabling `rollback_to(session)` semantics. Adopted from `wn-editor-extended`'s session tracking pattern. Adding it later requires only an `ALTER TABLE ADD COLUMN` — no data migration needed |
 
 **Not changed from `wn`:**
 - All CASCADE DELETE rules preserved (lexicon deletion cascades to all owned entities)

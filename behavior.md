@@ -361,3 +361,19 @@ After constructing the `LexicalResource` TypedDict, the export pipeline runs `wn
 2. Validate the temp file
 3. Only if validation passes: `wn.remove()` then `wn.add()`
 4. This prevents data loss if the export is invalid
+
+### RULE-EXPORT-004: LMF version data preservation
+
+**When**: `export_lmf(destination, lmf_version=ver)` is called with `ver` < `"1.4"`.
+**Then**: Data that is not representable in the target LMF version is silently dropped by `wn.lmf.dump()`. The editor logs a WARNING listing what will be lost.
+
+| Data | Requires LMF | Dropped at ≤ |
+|------|-------------|--------------|
+| `lexfile` | ≥1.1 | 1.0 |
+| `count` | ≥1.1 | 1.0 |
+| `logo` | ≥1.1 | 1.0 |
+| `frames` (lexicon-level) | ≥1.1 | 1.0 |
+| `members` (synset) | ≥1.1 | 1.0 |
+| `index` (entry) | ≥1.4 | 1.1 |
+
+**Rationale**: `wn.lmf.dump(version=...)` handles the actual filtering. The editor adds a warning layer so users are not surprised by data loss. Adopted from `wn_edit`'s LMF version awareness pattern.

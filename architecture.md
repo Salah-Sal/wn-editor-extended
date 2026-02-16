@@ -239,3 +239,87 @@ WordnetEditorError (base)
 2. **No silent failures**: Every error condition raises an exception (mutations) or returns a result (validation).
 3. **Transaction safety**: Exceptions from within a transaction trigger automatic rollback. The database is never left in a partially-modified state.
 4. **Standard Python conventions**: `EntityNotFoundError` is not a subclass of `KeyError` — it's domain-specific. This prevents accidental catching by generic handlers.
+
+---
+
+## 1.8 — Implementation Patterns
+
+### Mutation Decorator
+
+All public methods that modify the database use a `@_modifies_db` decorator (adopted from `wn-editor-extended`'s pattern). This eliminates transaction and history boilerplate across ~30 mutation methods:
+
+```python
+def _modifies_db(method):
+    """Decorator for mutation methods: wraps in transaction, records edit history."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self._in_batch:
+            return method(self, *args, **kwargs)
+        with self._conn:  # BEGIN / COMMIT (or ROLLBACK on exception)
+            return method(self, *args, **kwargs)
+    return wrapper
+```
+
+**Responsibilities:**
+- Opens a transaction (unless inside a `batch()` context)
+- Commits on success, rolls back on exception
+- The method body is responsible for inserting `edit_history` rows (these are part of the same transaction)
+
+### Dual-Path Import
+
+The `import_from_wn()` method uses a dual-path strategy (adopted from `wn_edit`'s bulk loading approach):
+
+```python
+def _import_from_wn(self, specifier):
+    try:
+        return self._import_from_wn_bulk(specifier)  # fast: ~10s for OEWN
+    except (ImportError, AttributeError, sqlite3.OperationalError):
+        return self._import_from_wn_xml(specifier)   # fallback: ~140s for OEWN
+```
+
+The fast path uses `wn._db.connect()` (private API) for ~20 bulk SQL queries. The fallback uses `wn.export()` → temp XML → `wn.lmf.load()`. See `pipeline.md` section 6.2 for details.
+
+---
+
+## 1.9 — Future Extensions (v2.0+)
+
+These features are not in the v1.0 scope but have been designed to be compatible with the current architecture. They are documented here so that v1.0 implementation decisions don't preclude them.
+
+### Rollback Mechanism
+
+**Source**: `wn-editor-extended`'s hook-based changelog with session tracking and rollback support.
+
+The `edit_history` table already captures `old_value` JSON for every UPDATE and DELETE. A future `undo()` or `rollback_to(timestamp)` method could replay these in reverse:
+
+```python
+# Future API (not in v1.0)
+editor.undo()                        # undo last mutation
+editor.rollback_to("2026-02-15T...")  # revert to timestamp
+```
+
+**v1.0 preparation**: Ensure `old_value` captures complete pre-mutation state (not partial). Consider adding a `session_id` column to `edit_history` in a future schema migration (see `schema.md` section 2.4).
+
+### YAML Batch Editing System
+
+**Source**: `wn-editor-extended`'s batch subsystem (parser → validator → executor, ~1,582 lines).
+
+A YAML-based declarative format for batch edits would complement the programmatic API:
+
+```yaml
+# Future batch format (not in v1.0)
+operations:
+  - create_synset:
+      lexicon: awn
+      pos: n
+      definition: "A new concept"
+  - add_synset_relation:
+      source: awn-00001-n
+      type: hypernym
+      target: awn-00002-n
+```
+
+**v1.0 preparation**: The `batch()` context manager provides the transactional foundation. A future batch parser would call the same public API methods inside a `batch()` block.
+
+### Web Interface
+
+A web-based editing UI could wrap the `WordnetEditor` API. The SQLite WAL journal mode already supports concurrent reads (export/query while editing). A future web layer would use the same public API surface — no architectural changes needed.

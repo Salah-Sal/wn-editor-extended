@@ -30,14 +30,21 @@ editor = WordnetEditor("my_wordnet.db")
 editor = WordnetEditor()  # in-memory
 ```
 
-### `WordnetEditor.from_wn(lexicon: str, db_path: str | Path = ":memory:", *, record_history: bool = True) -> WordnetEditor`
+### `WordnetEditor.from_wn(lexicon: str, db_path: str | Path = ":memory:", *, record_history: bool = True, version: str | None = None, label: str | None = None, lexicon_id: str | None = None, email: str | None = None, license: str | None = None, url: str | None = None, citation: str | None = None) -> WordnetEditor`
 
-**Description**: Create an editor database pre-populated with data from the `wn` library's database.
+**Description**: Create an editor database pre-populated with data from the `wn` library's database. Optionally override metadata fields to create a derivative work.
 
 **Parameters**:
 - `lexicon` — Lexicon specifier string (e.g., `"ewn:2024"`, `"omw-en31:1.4"`). Must match a lexicon in `wn`'s database.
 - `db_path` — Path for the editor database.
 - `record_history` — If True (default), record CREATE entries in `edit_history` for each imported entity. Set to False for large bulk imports to improve performance.
+- `version` — Override the imported lexicon's version string. Useful for derivative works.
+- `label` — Override the imported lexicon's label.
+- `lexicon_id` — Override the imported lexicon's ID. **Note**: This also updates the `specifier` to `{new_id}:{version}`.
+- `email` — Override the contact email.
+- `license` — Override the license URL.
+- `url` — Override the project URL.
+- `citation` — Override the citation text.
 
 **Returns**: A new `WordnetEditor` instance with the imported data.
 
@@ -47,13 +54,25 @@ editor = WordnetEditor()  # in-memory
 
 **Pre-conditions**: The specified lexicon must be installed in `wn` (via `wn.download()` or `wn.add()`).
 
-**Post-conditions**: The editor database contains all entities from the specified lexicon. `edit_history` contains CREATE records for each imported entity.
+**Post-conditions**: The editor database contains all entities from the specified lexicon. If override parameters were provided, the lexicon row reflects the overridden values. `edit_history` contains CREATE records for each imported entity.
+
+**Implementation note**: Uses a dual-path import strategy (bulk SQL fast path with XML fallback). See `pipeline.md` section 6.2.
 
 **Example**:
 ```python
 import wn
 wn.download("ewn:2024")
+
+# Simple import
 editor = WordnetEditor.from_wn("ewn:2024", "ewn_edit.db")
+
+# Derivative work with overrides
+editor = WordnetEditor.from_wn(
+    "ewn:2024", "my_ewn.db",
+    version="2024-custom",
+    label="My Custom EWN",
+    email="me@example.com",
+)
 ```
 
 ### `WordnetEditor.from_lmf(source: str | Path, db_path: str | Path = ":memory:", *, record_history: bool = True) -> WordnetEditor`
@@ -563,17 +582,18 @@ editor.add_synset_relation("awn-00001-n", "hypernym", "awn-00002-n")
 - `DataImportError` — If the XML is malformed.
 - `DuplicateEntityError` — If a lexicon with same `(id, version)` already exists.
 
-### `export_lmf(destination: str | Path, *, lexicon_ids: list[str] | None = None)`
+### `export_lmf(destination: str | Path, *, lexicon_ids: list[str] | None = None, lmf_version: str = "1.4")`
 
 **Description**: Export the editor database to WN-LMF XML.
 
 **Parameters**:
 - `destination` — Output file path.
 - `lexicon_ids` — Specific lexicons to export. If None, export all.
+- `lmf_version` — WN-LMF version string for the output XML. Default `"1.4"`. Supported values: `"1.0"`, `"1.1"`, `"1.4"`. **Warning**: Exporting at version `"1.0"` silently drops `lexfile`, `count`, `logo`, `frames`, and `members` data. A warning is logged if data would be lost.
 
 **Raises**: `ExportError` if validation errors (E-codes) are found.
 
-**Post-conditions**: Valid WN-LMF 1.4 XML file at `destination`.
+**Post-conditions**: Valid WN-LMF XML file at `destination` with the specified LMF version.
 
 ### `commit_to_wn(*, db_path: str | Path | None = None, lexicon_ids: list[str] | None = None)`
 
