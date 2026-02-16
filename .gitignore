@@ -1,4 +1,6 @@
 wn/
+wn_edit/
+wn-editor-extended/
 __pycache__/
 *.pyc
 *.egg-info/
