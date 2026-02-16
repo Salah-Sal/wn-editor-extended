@@ -181,7 +181,7 @@ class ProposedILIModel:
 ```python
 @dataclass(frozen=True, slots=True)
 class CountModel:
-    value: int                 # Frequency count
+    value: int                 # Frequency count (maps to DB column `count`)
     metadata: dict | None      # Dublin Core metadata
 ```
 

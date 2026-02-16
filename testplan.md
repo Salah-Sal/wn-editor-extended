@@ -78,6 +78,11 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 - **Action**: `list_lexicons()`
 - **Verify**: Returns both
 
+### TP-LEX-006: Delete lexicon cascades
+- **Setup**: Lexicon with synsets, entries, senses, and relations
+- **Action**: `delete_lexicon(lexicon_id)`
+- **Verify**: All synsets, entries, senses, relations, definitions, and examples belonging to the lexicon are removed. Cross-lexicon relations pointing to deleted entities are also removed. Edit history records all deletions.
+
 ---
 
 ## Synset Operations
@@ -211,6 +216,11 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 - **Setup**: Entry with senses
 - **Action**: `delete_entry(entry_id)`
 - **Verify**: Raises `RelationError`
+
+### TP-ENT-009: Delete entry with cascade
+- **Setup**: Entry with two senses, each having sense relations
+- **Action**: `delete_entry(entry_id, cascade=True)`
+- **Verify**: Entry, all its senses, all sense relations removed. Empty synsets marked unlexicalized. Edit history records all deletions.
 
 ---
 
@@ -478,3 +488,32 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 ### TP-META-003: Set confidence score
 - **Action**: `set_confidence("synset", synset_id, 0.85)`
 - **Verify**: Metadata contains `{"confidenceScore": 0.85}`
+
+### TP-META-004: Confidence inheritance from lexicon
+- **Setup**: Lexicon has `confidenceScore: 0.9`. Synset has no explicit confidence.
+- **Action**: `export_lmf("out.xml")`
+- **Verify**: Exported synset element inherits `confidenceScore="0.9"` from parent lexicon per WN-LMF spec (RULE-CONF-001).
+
+### TP-META-005: Entity confidence overrides lexicon
+- **Setup**: Lexicon has `confidenceScore: 0.9`. Synset has explicit `confidenceScore: 0.5`.
+- **Action**: `export_lmf("out.xml")`
+- **Verify**: Exported synset element has `confidenceScore="0.5"` (entity-level overrides lexicon-level per RULE-CONF-002).
+
+---
+
+## Cross-Lexicon Operations
+
+### TP-XLEX-001: Import two lexicons
+- **Setup**: Load `two_lexicons.xml` fixture containing two lexicons with cross-references
+- **Action**: `from_lmf("two_lexicons.xml", "test.db")`
+- **Verify**: Both lexicons imported. Cross-lexicon synset relations preserved. `find_entries(lexicon_id=...)` filters correctly.
+
+### TP-XLEX-002: Cross-lexicon relation
+- **Setup**: Two lexicons in editor
+- **Action**: `add_synset_relation(synset_in_lex_A, synset_in_lex_B, "hypernym")`
+- **Verify**: Relation created. Inverse `hyponym` created on the target synset in lexicon B.
+
+### TP-XLEX-003: Import lexicon extension
+- **Setup**: Load `extension.xml` fixture containing a lexicon extension
+- **Action**: `from_lmf("extension.xml", "test.db")`
+- **Verify**: Extension's `extends` attribute preserved. Extension entries correctly reference base lexicon synsets.

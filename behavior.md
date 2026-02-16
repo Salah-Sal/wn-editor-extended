@@ -149,6 +149,8 @@ If invalid, raise `ValidationError("Invalid relation type: {relation_type}")`.
 
 All senses from `source` are reassigned to `target` by updating `senses.synset_rowid`. Sense IDs are preserved.
 
+**Edge case**: If both `source` and `target` have senses belonging to the same entry, the merge must not create duplicate senses for that entry pointing to the same synset. In this case, the redundant sense from `source` is deleted (the `target` sense is kept), and any sense relations unique to the deleted sense are transferred to the kept sense.
+
 ### RULE-MERGE-002: Incoming relation redirect
 
 All `synset_relations` where `target_rowid` points to `source` are updated to point to `target`. Duplicates (target already has the same relation from the same source) are removed.
@@ -273,7 +275,7 @@ All entity IDs (synset, entry, sense) MUST begin with the owning lexicon's `id` 
 ### RULE-EMPTY-001: Synset becomes unlexicalized
 
 **When**: A synset's last sense is removed (via `remove_sense` or `move_sense`).
-**Then**: Insert the synset's rowid into `unlexicalized_synsets`. The synset is NOT deleted. Validation will issue a WARNING (VAL-SYN-002).
+**Then**: Insert the synset's rowid into `unlexicalized_synsets`. The synset is NOT deleted. Validation will issue a WARNING (VAL-SYN-001).
 
 ### RULE-EMPTY-002: Synset becomes lexicalized
 

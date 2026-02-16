@@ -221,7 +221,8 @@ VALUES (:type, :id, 'CREATE', :json_summary)
 The insertion order above is critical because of foreign key constraints:
 
 ```
-ili_statuses → ilis → lexicons → lexicon_dependencies → lexicon_extensions
+ili_statuses → relation_types → lexfiles → ilis → lexicons
+    → lexicon_dependencies → lexicon_extensions
     → synsets → entries → entry_index → forms → pronunciations → tags
     → senses → unlexicalized_senses → adjpositions → counts
     → syntactic_behaviours → syntactic_behaviour_senses

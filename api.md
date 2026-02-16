@@ -250,6 +250,8 @@ entry = editor.create_entry("awn", "قطة", "n", forms=["قطط"])
 
 **Description**: Retrieve an entry by ID.
 
+**Raises**: `EntityNotFoundError` if no entry with the given ID exists.
+
 ### `find_entries(*, lexicon_id: str | None = None, lemma: str | None = None, pos: str | None = None) -> list[EntryModel]`
 
 **Description**: Search for entries matching criteria.
@@ -315,6 +317,8 @@ entry = editor.create_entry("awn", "قطة", "n", forms=["قطط"])
 ### `get_sense(sense_id: str) -> SenseModel`
 
 **Description**: Retrieve a sense by ID.
+
+**Raises**: `EntityNotFoundError` if no sense with the given ID exists.
 
 ---
 
