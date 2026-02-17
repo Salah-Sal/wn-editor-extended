@@ -3,14 +3,18 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "wordnet-editor"
-version = "0.1.0"
-description = "A pure Python editing library for WordNets"
+name = "wn-editor-extended"
+version = "1.0.0"
+description = "A pure Python editing library for WordNets. Full CRUD, automatic inverse relations, compound operations, validation, edit history, and WN-LMF 1.4 import/export."
+authors = [
+    {name = "Salah Abdo", email = "Salah.Abdo.Tech@gmail.com"}
+]
 requires-python = ">=3.10"
 license = { text = "MIT" }
-keywords = ["wordnet", "linguistics", "nlp", "editor", "lexicon"]
+readme = "README.md"
+keywords = ["wordnet", "linguistics", "nlp", "editor", "lexicon", "wn-lmf"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
@@ -26,6 +30,11 @@ classifiers = [
 dependencies = [
     "wn>=1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Salah-Sal/wn-editor-extended"
+Repository = "https://github.com/Salah-Sal/wn-editor-extended"
+Issues = "https://github.com/Salah-Sal/wn-editor-extended/issues"
 
 [project.optional-dependencies]
 dev = [
