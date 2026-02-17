@@ -7,7 +7,10 @@ import sqlite3
 
 from wordnet_editor.models import ValidationResult
 from wordnet_editor.relations import (
+    SENSE_RELATIONS,
+    SENSE_SYNSET_RELATIONS,
     SYNSET_RELATION_INVERSES,
+    SYNSET_RELATIONS,
 )
 
 
@@ -25,10 +28,15 @@ def validate_all(
     results.extend(_val_ent_004(conn, lexicon_id))
     results.extend(_val_syn_001(conn, lexicon_id))
     results.extend(_val_syn_002(conn, lexicon_id))
+    results.extend(_val_syn_003(conn, lexicon_id))
+    results.extend(_val_syn_004(conn, lexicon_id))
     results.extend(_val_syn_005(conn, lexicon_id))
+    results.extend(_val_syn_006(conn, lexicon_id))
     results.extend(_val_syn_007(conn, lexicon_id))
     results.extend(_val_syn_008(conn, lexicon_id))
     results.extend(_val_rel_001(conn, lexicon_id))
+    results.extend(_val_rel_002(conn, lexicon_id))
+    results.extend(_val_rel_003(conn, lexicon_id))
     results.extend(_val_rel_004(conn, lexicon_id))
     results.extend(_val_rel_005(conn, lexicon_id))
     results.extend(_val_tax_001(conn, lexicon_id))
@@ -678,4 +686,181 @@ def _val_edt_003(
                     message=f"Sense has low confidence: {score}",
                     details=None,
                 ))
+    return results
+
+
+def _val_syn_003(
+    conn: sqlite3.Connection, lexicon_id: str | None
+) -> list[ValidationResult]:
+    """Proposed ILI (ili='in') missing definition in proposed_ilis."""
+    results = []
+    filt, params = _lex_filter(lexicon_id)
+    sql = (
+        "SELECT s.id FROM synsets s "
+        "JOIN proposed_ilis p ON p.synset_rowid = s.rowid "
+        f"WHERE (p.definition IS NULL OR TRIM(p.definition) = '')"
+        f" {filt.replace('lexicon_rowid', 's.lexicon_rowid')}"
+    )
+    for row in conn.execute(sql, params).fetchall():
+        results.append(ValidationResult(
+            rule_id="VAL-SYN-003",
+            severity="WARNING",
+            entity_type="synset",
+            entity_id=row["id"],
+            message="Proposed ILI is missing a definition",
+            details=None,
+        ))
+    return results
+
+
+def _val_syn_004(
+    conn: sqlite3.Connection, lexicon_id: str | None
+) -> list[ValidationResult]:
+    """Existing ILI has spurious proposed ILI entry."""
+    results = []
+    filt, params = _lex_filter(lexicon_id)
+    sql = (
+        "SELECT s.id FROM synsets s "
+        "JOIN proposed_ilis p ON p.synset_rowid = s.rowid "
+        f"WHERE s.ili_rowid IS NOT NULL"
+        f" {filt.replace('lexicon_rowid', 's.lexicon_rowid')}"
+    )
+    for row in conn.execute(sql, params).fetchall():
+        results.append(ValidationResult(
+            rule_id="VAL-SYN-004",
+            severity="WARNING",
+            entity_type="synset",
+            entity_id=row["id"],
+            message="Existing ILI has a spurious ILI definition",
+            details=None,
+        ))
+    return results
+
+
+def _val_syn_006(
+    conn: sqlite3.Connection, lexicon_id: str | None
+) -> list[ValidationResult]:
+    """Blank synset examples."""
+    results = []
+    filt, params = _lex_filter(lexicon_id)
+    sql = (
+        "SELECT s.id FROM synset_examples e "
+        "JOIN synsets s ON e.synset_rowid = s.rowid "
+        f"WHERE (e.example IS NULL OR TRIM(e.example) = '')"
+        f" {filt.replace('lexicon_rowid', 'e.lexicon_rowid')}"
+    )
+    for row in conn.execute(sql, params).fetchall():
+        results.append(ValidationResult(
+            rule_id="VAL-SYN-006",
+            severity="WARNING",
+            entity_type="synset",
+            entity_id=row["id"],
+            message="Synset has a blank example",
+            details=None,
+        ))
+    return results
+
+
+def _val_rel_002(
+    conn: sqlite3.Connection, lexicon_id: str | None
+) -> list[ValidationResult]:
+    """Relation type invalid for source/target entity pair."""
+    results = []
+    filt, params = _lex_filter(lexicon_id)
+
+    # Synset relations with invalid type
+    sql = (
+        "SELECT src.id as source_id, rt.type "
+        "FROM synset_relations sr "
+        "JOIN synsets src ON sr.source_rowid = src.rowid "
+        "JOIN relation_types rt ON sr.type_rowid = rt.rowid "
+        f"WHERE 1=1 {filt.replace('lexicon_rowid', 'sr.lexicon_rowid')}"
+    )
+    for row in conn.execute(sql, params).fetchall():
+        if row["type"] not in SYNSET_RELATIONS:
+            results.append(ValidationResult(
+                rule_id="VAL-REL-002",
+                severity="WARNING",
+                entity_type="relation",
+                entity_id=row["source_id"],
+                message=f"Invalid synset relation type: {row['type']}",
+                details={"relation_type": row["type"]},
+            ))
+
+    # Sense relations with invalid type
+    sql = (
+        "SELECT src.id as source_id, rt.type, "
+        "CASE WHEN EXISTS (SELECT 1 FROM senses t WHERE t.rowid = sr.target_rowid) "
+        "THEN 'sense' ELSE 'unknown' END as target_kind "
+        "FROM sense_relations sr "
+        "JOIN senses src ON sr.source_rowid = src.rowid "
+        "JOIN relation_types rt ON sr.type_rowid = rt.rowid "
+        f"WHERE 1=1 {filt.replace('lexicon_rowid', 'sr.lexicon_rowid')}"
+    )
+    for row in conn.execute(sql, params).fetchall():
+        if row["type"] not in SENSE_RELATIONS:
+            results.append(ValidationResult(
+                rule_id="VAL-REL-002",
+                severity="WARNING",
+                entity_type="relation",
+                entity_id=row["source_id"],
+                message=f"Invalid sense relation type: {row['type']}",
+                details={"relation_type": row["type"]},
+            ))
+
+    # Sense-synset relations with invalid type
+    sql = (
+        "SELECT src.id as source_id, rt.type "
+        "FROM sense_synset_relations ssr "
+        "JOIN senses src ON ssr.source_rowid = src.rowid "
+        "JOIN relation_types rt ON ssr.type_rowid = rt.rowid "
+        f"WHERE 1=1 {filt.replace('lexicon_rowid', 'ssr.lexicon_rowid')}"
+    )
+    for row in conn.execute(sql, params).fetchall():
+        if row["type"] not in SENSE_SYNSET_RELATIONS:
+            results.append(ValidationResult(
+                rule_id="VAL-REL-002",
+                severity="WARNING",
+                entity_type="relation",
+                entity_id=row["source_id"],
+                message=f"Invalid sense-synset relation type: {row['type']}",
+                details={"relation_type": row["type"]},
+            ))
+
+    return results
+
+
+def _val_rel_003(
+    conn: sqlite3.Connection, lexicon_id: str | None
+) -> list[ValidationResult]:
+    """Redundant relations (duplicate source, type, target)."""
+    results = []
+    filt, params = _lex_filter(lexicon_id)
+
+    for table, etype, src_join, src_id_col in [
+        ("synset_relations", "synset", "synsets", "id"),
+        ("sense_relations", "sense", "senses", "id"),
+    ]:
+        sql = (
+            f"SELECT src.{src_id_col} as source_id, rt.type, COUNT(*) as cnt "
+            f"FROM {table} r "
+            f"JOIN {src_join} src ON r.source_rowid = src.rowid "
+            f"JOIN relation_types rt ON r.type_rowid = rt.rowid "
+            f"WHERE 1=1 {filt.replace('lexicon_rowid', 'r.lexicon_rowid')} "
+            f"GROUP BY r.source_rowid, r.target_rowid, r.type_rowid "
+            f"HAVING cnt > 1"
+        )
+        for row in conn.execute(sql, params).fetchall():
+            results.append(ValidationResult(
+                rule_id="VAL-REL-003",
+                severity="WARNING",
+                entity_type="relation",
+                entity_id=row["source_id"],
+                message=(
+                    f"Redundant {etype} relation: {row['type']} "
+                    f"appears {row['cnt']} times"
+                ),
+                details={"count": row["cnt"]},
+            ))
+
     return results

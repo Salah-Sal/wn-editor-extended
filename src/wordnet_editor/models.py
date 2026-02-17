@@ -11,6 +11,8 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 class PartOfSpeech(str, Enum):
+    """Part-of-speech tags for lexical entries and synsets."""
+
     NOUN = "n"
     VERB = "v"
     ADJECTIVE = "a"
@@ -24,12 +26,16 @@ class PartOfSpeech(str, Enum):
 
 
 class AdjPosition(str, Enum):
+    """Syntactic position of an adjective relative to a noun."""
+
     ATTRIBUTIVE = "a"
     IMMEDIATE_POSTNOMINAL = "ip"
     PREDICATIVE = "p"
 
 
 class SynsetRelationType(str, Enum):
+    """Valid relation types between synsets."""
+
     AGENT = "agent"
     ALSO = "also"
     ANTONYM = "antonym"
@@ -118,6 +124,8 @@ class SynsetRelationType(str, Enum):
 
 
 class SenseRelationType(str, Enum):
+    """Valid relation types between senses."""
+
     AGENT = "agent"
     ALSO = "also"
     ANTONYM = "antonym"
@@ -169,6 +177,8 @@ class SenseRelationType(str, Enum):
 
 
 class SenseSynsetRelationType(str, Enum):
+    """Valid relation types from a sense to a synset."""
+
     OTHER = "other"
     DOMAIN_TOPIC = "domain_topic"
     DOMAIN_REGION = "domain_region"
@@ -176,12 +186,16 @@ class SenseSynsetRelationType(str, Enum):
 
 
 class EditOperation(str, Enum):
+    """Type of mutation recorded in the edit history."""
+
     CREATE = "CREATE"
     UPDATE = "UPDATE"
     DELETE = "DELETE"
 
 
 class ValidationSeverity(str, Enum):
+    """Severity level for validation results."""
+
     ERROR = "ERROR"
     WARNING = "WARNING"
 
@@ -192,6 +206,8 @@ class ValidationSeverity(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class LexiconModel:
+    """A WordNet lexicon (language-specific resource container)."""
+
     id: str
     label: str
     language: str
@@ -206,6 +222,8 @@ class LexiconModel:
 
 @dataclass(frozen=True, slots=True)
 class SynsetModel:
+    """A synset (set of synonymous senses sharing a concept)."""
+
     id: str
     lexicon_id: str
     pos: str | None
@@ -217,6 +235,8 @@ class SynsetModel:
 
 @dataclass(frozen=True, slots=True)
 class EntryModel:
+    """A lexical entry (word + part of speech)."""
+
     id: str
     lexicon_id: str
     lemma: str
@@ -227,6 +247,8 @@ class EntryModel:
 
 @dataclass(frozen=True, slots=True)
 class SenseModel:
+    """A sense linking a lexical entry to a synset."""
+
     id: str
     entry_id: str
     synset_id: str
@@ -240,6 +262,8 @@ class SenseModel:
 
 @dataclass(frozen=True, slots=True)
 class FormModel:
+    """A written form of a lexical entry (lemma or variant)."""
+
     written_form: str
     id: str | None
     script: str | None
@@ -250,6 +274,8 @@ class FormModel:
 
 @dataclass(frozen=True, slots=True)
 class PronunciationModel:
+    """A pronunciation of a written form."""
+
     value: str
     variety: str | None
     notation: str | None
@@ -259,12 +285,16 @@ class PronunciationModel:
 
 @dataclass(frozen=True, slots=True)
 class TagModel:
+    """A categorized tag attached to a form."""
+
     tag: str
     category: str
 
 
 @dataclass(frozen=True, slots=True)
 class DefinitionModel:
+    """A definition of a synset, optionally language-tagged."""
+
     text: str
     language: str | None
     source_sense: str | None
@@ -273,6 +303,8 @@ class DefinitionModel:
 
 @dataclass(frozen=True, slots=True)
 class ExampleModel:
+    """A usage example for a synset or sense."""
+
     text: str
     language: str | None
     metadata: dict[str, Any] | None
@@ -280,6 +312,8 @@ class ExampleModel:
 
 @dataclass(frozen=True, slots=True)
 class RelationModel:
+    """A typed, directed relation between two entities."""
+
     source_id: str
     target_id: str
     relation_type: str
@@ -288,6 +322,8 @@ class RelationModel:
 
 @dataclass(frozen=True, slots=True)
 class ILIModel:
+    """An Interlingual Index entry linking synsets across languages."""
+
     id: str
     status: str
     definition: str | None
@@ -296,6 +332,8 @@ class ILIModel:
 
 @dataclass(frozen=True, slots=True)
 class ProposedILIModel:
+    """A proposed new ILI entry awaiting approval."""
+
     synset_id: str
     definition: str
     metadata: dict[str, Any] | None
@@ -303,12 +341,16 @@ class ProposedILIModel:
 
 @dataclass(frozen=True, slots=True)
 class CountModel:
+    """A frequency count associated with a sense."""
+
     value: int
     metadata: dict[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
 class SyntacticBehaviourModel:
+    """A subcategorization frame shared by one or more senses."""
+
     id: str | None
     frame: str
     sense_ids: tuple[str, ...]
@@ -316,6 +358,8 @@ class SyntacticBehaviourModel:
 
 @dataclass(frozen=True, slots=True)
 class EditRecord:
+    """A single edit-history entry recording one field-level change."""
+
     id: int
     entity_type: str
     entity_id: str
@@ -328,6 +372,8 @@ class EditRecord:
 
 @dataclass(frozen=True, slots=True)
 class ValidationResult:
+    """A single validation finding (error or warning)."""
+
     rule_id: str
     severity: str
     entity_type: str

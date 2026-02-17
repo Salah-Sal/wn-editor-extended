@@ -26,6 +26,7 @@ from wordnet_editor.models import (
     EntryModel,
     ExampleModel,
     FormModel,
+    ILIModel,
     LexiconModel,
     PronunciationModel,
     RelationModel,
@@ -65,9 +66,30 @@ def _modifies_db(method: _F) -> _F:
 
 
 class WordnetEditor:
-    """A complete programmatic API for editing WordNets."""
+    """A complete programmatic API for editing WordNets.
+
+    Manages its own SQLite database and provides full CRUD operations on
+    lexicons, synsets, entries, senses, definitions, examples, and relations.
+    Supports atomic compound operations (merge, split, move), automatic
+    inverse relations, 22-rule validation, field-level edit history, and
+    round-trip WN-LMF 1.4 import/export.
+
+    Use as a context manager to ensure the database connection is closed::
+
+        with WordnetEditor("my.db") as editor:
+            ...
+    """
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
+        """Open or create a WordNet editing database.
+
+        Args:
+            db_path: Path to the SQLite file, or ``":memory:"`` for an
+                in-memory database.
+
+        Raises:
+            DatabaseError: If the file exists but has an incompatible schema.
+        """
         self._db_path = str(db_path)
         self._conn = _db.connect(db_path)
         _db.check_schema_version(self._conn)
@@ -91,7 +113,12 @@ class WordnetEditor:
 
     @contextmanager
     def batch(self) -> Generator[None, None, None]:
-        """Group multiple mutations into a single transaction."""
+        """Group multiple mutations into a single transaction.
+
+        All changes inside the ``with`` block are committed atomically on
+        success or rolled back on exception.  Batches may be nested; only
+        the outermost batch issues COMMIT/ROLLBACK.
+        """
         self._batch_depth += 1
         if self._batch_depth == 1:
             self._in_batch = True
@@ -129,6 +156,27 @@ class WordnetEditor:
         logo: str | None = None,
         metadata: dict | None = None,
     ) -> LexiconModel:
+        """Create a new lexicon.
+
+        Args:
+            id: Unique lexicon identifier (e.g. ``"ewn"``).
+            label: Human-readable name.
+            language: BCP-47 language tag (e.g. ``"en"``).
+            email: Maintainer contact email.
+            license: License URL.
+            version: Version string (e.g. ``"1.0"``).
+            url: Optional project URL.
+            citation: Optional bibliographic citation.
+            logo: Optional logo URL.
+            metadata: Optional JSON-serializable metadata dict.
+
+        Returns:
+            The newly created lexicon.
+
+        Raises:
+            DuplicateEntityError: A lexicon with the same *id* and *version*
+                already exists.
+        """
         specifier = f"{id}:{version}"
         try:
             self._conn.execute(
@@ -165,6 +213,28 @@ class WordnetEditor:
         logo: Any = _UNSET,
         metadata: Any = _UNSET,
     ) -> LexiconModel:
+        """Update mutable fields of an existing lexicon.
+
+        Only the keyword arguments that are explicitly passed will be changed.
+        Pass ``None`` for nullable fields (url, citation, logo, metadata) to
+        clear them.
+
+        Args:
+            lexicon_id: ID of the lexicon to update.
+            label: New human-readable name.
+            email: New maintainer email.
+            license: New license URL.
+            url: New project URL, or ``None`` to clear.
+            citation: New citation, or ``None`` to clear.
+            logo: New logo URL, or ``None`` to clear.
+            metadata: New metadata dict, or ``None`` to clear.
+
+        Returns:
+            The updated lexicon.
+
+        Raises:
+            EntityNotFoundError: No lexicon with *lexicon_id* exists.
+        """
         row = _db.get_lexicon_row(self._conn, lexicon_id)
         if row is None:
             raise EntityNotFoundError(f"Lexicon not found: {lexicon_id!r}")
@@ -207,17 +277,41 @@ class WordnetEditor:
         return self.get_lexicon(lexicon_id)
 
     def get_lexicon(self, lexicon_id: str) -> LexiconModel:
+        """Retrieve a lexicon by its ID.
+
+        Args:
+            lexicon_id: Lexicon identifier.
+
+        Returns:
+            The matching lexicon.
+
+        Raises:
+            EntityNotFoundError: No lexicon with *lexicon_id* exists.
+        """
         row = _db.get_lexicon_row(self._conn, lexicon_id)
         if row is None:
             raise EntityNotFoundError(f"Lexicon not found: {lexicon_id!r}")
         return self._row_to_lexicon(row)
 
     def list_lexicons(self) -> list[LexiconModel]:
+        """Return all lexicons in the database.
+
+        Returns:
+            List of all lexicons (may be empty).
+        """
         rows = self._conn.execute("SELECT rowid, * FROM lexicons").fetchall()
         return [self._row_to_lexicon(r) for r in rows]
 
     @_modifies_db
     def delete_lexicon(self, lexicon_id: str) -> None:
+        """Delete a lexicon and all its contents (synsets, entries, senses).
+
+        Args:
+            lexicon_id: ID of the lexicon to delete.
+
+        Raises:
+            EntityNotFoundError: No lexicon with *lexicon_id* exists.
+        """
         row = _db.get_lexicon_row(self._conn, lexicon_id)
         if row is None:
             raise EntityNotFoundError(f"Lexicon not found: {lexicon_id!r}")
@@ -258,6 +352,26 @@ class WordnetEditor:
         lexicalized: bool = True,
         metadata: dict | None = None,
     ) -> SynsetModel:
+        """Create a new synset with an initial definition.
+
+        Args:
+            lexicon_id: Parent lexicon ID.
+            pos: Part-of-speech tag (one of ``PartOfSpeech`` values).
+            definition: Initial definition text.
+            id: Explicit synset ID, or ``None`` to auto-generate.
+            ili: ILI identifier, or ``"in"`` to propose a new ILI entry.
+            ili_definition: Required when *ili* is ``"in"`` (min 20 chars).
+            lexicalized: Whether the synset is lexicalized (default ``True``).
+            metadata: Optional metadata dict.
+
+        Returns:
+            The newly created synset.
+
+        Raises:
+            ValidationError: Invalid POS, invalid ID prefix, or bad ILI args.
+            EntityNotFoundError: Lexicon not found.
+            DuplicateEntityError: Synset with *id* already exists.
+        """
         if pos not in _VALID_POS:
             raise ValidationError(f"Invalid POS: {pos!r}")
 
@@ -336,9 +450,22 @@ class WordnetEditor:
         synset_id: str,
         *,
         pos: str | None = None,
-        ili: Any = _UNSET,
         metadata: Any = _UNSET,
     ) -> SynsetModel:
+        """Update mutable fields of an existing synset.
+
+        Args:
+            synset_id: ID of the synset to update.
+            pos: New part-of-speech tag.
+            metadata: New metadata dict, or ``None`` to clear.
+
+        Returns:
+            The updated synset.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+            ValidationError: Invalid POS value.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -368,6 +495,16 @@ class WordnetEditor:
 
     @_modifies_db
     def delete_synset(self, synset_id: str, cascade: bool = False) -> None:
+        """Delete a synset.
+
+        Args:
+            synset_id: ID of the synset to delete.
+            cascade: If ``True``, also delete all attached senses.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+            RelationError: Synset has senses and *cascade* is ``False``.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -406,6 +543,17 @@ class WordnetEditor:
         )
 
     def get_synset(self, synset_id: str) -> SynsetModel:
+        """Retrieve a synset by its ID.
+
+        Args:
+            synset_id: Synset identifier.
+
+        Returns:
+            The matching synset.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+        """
         model = self._build_synset_model(synset_id)
         if model is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -419,6 +567,17 @@ class WordnetEditor:
         ili: str | None = None,
         definition_contains: str | None = None,
     ) -> list[SynsetModel]:
+        """Search for synsets matching all given criteria.
+
+        Args:
+            lexicon_id: Filter by parent lexicon.
+            pos: Filter by part-of-speech.
+            ili: Filter by ILI identifier.
+            definition_contains: Filter by substring match in definitions.
+
+        Returns:
+            List of matching synsets (may be empty).
+        """
         clauses: list[str] = []
         params: list[Any] = []
 
@@ -565,6 +724,24 @@ class WordnetEditor:
         forms: list[str] | None = None,
         metadata: dict | None = None,
     ) -> EntryModel:
+        """Create a new lexical entry.
+
+        Args:
+            lexicon_id: Parent lexicon ID.
+            lemma: The lemma (canonical written form).
+            pos: Part-of-speech tag.
+            id: Explicit entry ID, or ``None`` to auto-generate.
+            forms: Additional written forms (variants, inflections).
+            metadata: Optional metadata dict.
+
+        Returns:
+            The newly created entry.
+
+        Raises:
+            ValidationError: Invalid POS or invalid ID prefix.
+            EntityNotFoundError: Lexicon not found.
+            DuplicateEntityError: Entry with *id* already exists.
+        """
         if pos not in _VALID_POS:
             raise ValidationError(f"Invalid POS: {pos!r}")
 
@@ -635,6 +812,20 @@ class WordnetEditor:
         pos: str | None = None,
         metadata: Any = _UNSET,
     ) -> EntryModel:
+        """Update mutable fields of an existing entry.
+
+        Args:
+            entry_id: ID of the entry to update.
+            pos: New part-of-speech tag.
+            metadata: New metadata dict, or ``None`` to clear.
+
+        Returns:
+            The updated entry.
+
+        Raises:
+            EntityNotFoundError: Entry not found.
+            ValidationError: Invalid POS value.
+        """
         row = _db.get_entry_row(self._conn, entry_id)
         if row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -660,6 +851,16 @@ class WordnetEditor:
 
     @_modifies_db
     def delete_entry(self, entry_id: str, cascade: bool = False) -> None:
+        """Delete a lexical entry.
+
+        Args:
+            entry_id: ID of the entry to delete.
+            cascade: If ``True``, also delete all attached senses.
+
+        Raises:
+            EntityNotFoundError: Entry not found.
+            RelationError: Entry has senses and *cascade* is ``False``.
+        """
         row = _db.get_entry_row(self._conn, entry_id)
         if row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -690,6 +891,17 @@ class WordnetEditor:
         self._conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
 
     def get_entry(self, entry_id: str) -> EntryModel:
+        """Retrieve an entry by its ID.
+
+        Args:
+            entry_id: Entry identifier.
+
+        Returns:
+            The matching entry.
+
+        Raises:
+            EntityNotFoundError: Entry not found.
+        """
         model = self._build_entry_model(entry_id)
         if model is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -702,6 +914,16 @@ class WordnetEditor:
         lemma: str | None = None,
         pos: str | None = None,
     ) -> list[EntryModel]:
+        """Search for entries matching all given criteria.
+
+        Args:
+            lexicon_id: Filter by parent lexicon.
+            lemma: Filter by exact lemma match.
+            pos: Filter by part-of-speech.
+
+        Returns:
+            List of matching entries (may be empty).
+        """
         clauses: list[str] = []
         params: list[Any] = []
 
@@ -735,6 +957,19 @@ class WordnetEditor:
         script: str | None = None,
         tags: list[tuple[str, str]] | None = None,
     ) -> None:
+        """Add an additional written form (variant/inflection) to an entry.
+
+        Args:
+            entry_id: ID of the parent entry.
+            written_form: The form text to add.
+            id: Optional explicit form ID.
+            script: Optional ISO 15924 script tag.
+            tags: Optional list of ``(tag, category)`` pairs.
+
+        Raises:
+            EntityNotFoundError: Entry not found.
+            DuplicateEntityError: Form already exists for this entry.
+        """
         row = _db.get_entry_row(self._conn, entry_id)
         if row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -786,6 +1021,18 @@ class WordnetEditor:
 
     @_modifies_db
     def remove_form(self, entry_id: str, written_form: str) -> None:
+        """Remove an additional form from an entry.
+
+        The lemma form (rank 0) cannot be removed.
+
+        Args:
+            entry_id: ID of the parent entry.
+            written_form: The form text to remove.
+
+        Raises:
+            EntityNotFoundError: Entry or form not found.
+            ValidationError: Attempted to remove the lemma form.
+        """
         row = _db.get_entry_row(self._conn, entry_id)
         if row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -811,6 +1058,19 @@ class WordnetEditor:
         )
 
     def get_forms(self, entry_id: str) -> list[FormModel]:
+        """Return all forms of an entry, ordered by rank.
+
+        The lemma is always at rank 0.
+
+        Args:
+            entry_id: ID of the entry.
+
+        Returns:
+            List of forms, starting with the lemma.
+
+        Raises:
+            EntityNotFoundError: Entry not found.
+        """
         row = _db.get_entry_row(self._conn, entry_id)
         if row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -863,6 +1123,15 @@ class WordnetEditor:
 
     @_modifies_db
     def update_lemma(self, entry_id: str, new_lemma: str) -> None:
+        """Change the lemma (canonical form) of an entry.
+
+        Args:
+            entry_id: ID of the entry.
+            new_lemma: New lemma text.
+
+        Raises:
+            EntityNotFoundError: Entry not found.
+        """
         row = _db.get_entry_row(self._conn, entry_id)
         if row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -960,6 +1229,27 @@ class WordnetEditor:
         adjposition: str | None = None,
         metadata: dict | None = None,
     ) -> SenseModel:
+        """Link an entry to a synset by creating a new sense.
+
+        If the target synset was unlexicalized, it becomes lexicalized.
+
+        Args:
+            entry_id: ID of the parent entry.
+            synset_id: ID of the target synset.
+            id: Explicit sense ID, or ``None`` to auto-generate.
+            lexicalized: Whether the sense is lexicalized (default ``True``).
+            adjposition: Adjective position (``"a"``, ``"ip"``, ``"p"``).
+            metadata: Optional metadata dict.
+
+        Returns:
+            The newly created sense.
+
+        Raises:
+            EntityNotFoundError: Entry or synset not found.
+            DuplicateEntityError: Entry already has a sense for this synset,
+                or a sense with the given *id* already exists.
+            ValidationError: Invalid ID prefix.
+        """
         entry_row = _db.get_entry_row(self._conn, entry_id)
         if entry_row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -1054,6 +1344,16 @@ class WordnetEditor:
 
     @_modifies_db
     def remove_sense(self, sense_id: str) -> None:
+        """Delete a sense and its relations, examples, and counts.
+
+        If the synset has no remaining senses, it becomes unlexicalized.
+
+        Args:
+            sense_id: ID of the sense to delete.
+
+        Raises:
+            EntityNotFoundError: Sense not found.
+        """
         self._remove_sense_internal(sense_id)
 
     def _remove_sense_internal(self, sense_id: str) -> None:
@@ -1093,6 +1393,23 @@ class WordnetEditor:
 
     @_modifies_db
     def move_sense(self, sense_id: str, target_synset_id: str) -> SenseModel:
+        """Move a sense from its current synset to a different synset.
+
+        The source synset becomes unlexicalized if emptied.  The target
+        synset becomes lexicalized if it was unlexicalized.
+
+        Args:
+            sense_id: ID of the sense to move.
+            target_synset_id: ID of the destination synset.
+
+        Returns:
+            The updated sense.
+
+        Raises:
+            EntityNotFoundError: Sense or target synset not found.
+            DuplicateEntityError: Entry already has a sense in the target
+                synset.
+        """
         sense_row = _db.get_sense_row(self._conn, sense_id)
         if sense_row is None:
             raise EntityNotFoundError(f"Sense not found: {sense_id!r}")
@@ -1152,6 +1469,18 @@ class WordnetEditor:
     def reorder_senses(
         self, entry_id: str, sense_id_order: list[str]
     ) -> None:
+        """Set the ordering of senses within an entry.
+
+        Args:
+            entry_id: ID of the entry whose senses to reorder.
+            sense_id_order: Complete list of the entry's sense IDs in the
+                desired order.
+
+        Raises:
+            EntityNotFoundError: Entry not found.
+            ValidationError: *sense_id_order* does not exactly match the
+                entry's current sense IDs.
+        """
         entry_row = _db.get_entry_row(self._conn, entry_id)
         if entry_row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
@@ -1175,6 +1504,17 @@ class WordnetEditor:
             )
 
     def get_sense(self, sense_id: str) -> SenseModel:
+        """Retrieve a sense by its ID.
+
+        Args:
+            sense_id: Sense identifier.
+
+        Returns:
+            The matching sense.
+
+        Raises:
+            EntityNotFoundError: Sense not found.
+        """
         model = self._build_sense_model(sense_id)
         if model is None:
             raise EntityNotFoundError(f"Sense not found: {sense_id!r}")
@@ -1187,6 +1527,16 @@ class WordnetEditor:
         synset_id: str | None = None,
         lexicon_id: str | None = None,
     ) -> list[SenseModel]:
+        """Search for senses matching all given criteria.
+
+        Args:
+            entry_id: Filter by parent entry.
+            synset_id: Filter by target synset.
+            lexicon_id: Filter by parent lexicon.
+
+        Returns:
+            List of matching senses ordered by entry rank (may be empty).
+        """
         clauses: list[str] = []
         params: list[Any] = []
 
@@ -1306,6 +1656,18 @@ class WordnetEditor:
         source_sense: str | None = None,
         metadata: dict | None = None,
     ) -> None:
+        """Add a definition to a synset.
+
+        Args:
+            synset_id: ID of the synset.
+            text: Definition text.
+            language: Optional BCP-47 language tag.
+            source_sense: Optional sense ID this definition is derived from.
+            metadata: Optional metadata dict.
+
+        Raises:
+            EntityNotFoundError: Synset (or *source_sense*) not found.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1336,6 +1698,17 @@ class WordnetEditor:
     def update_definition(
         self, synset_id: str, definition_index: int, text: str
     ) -> None:
+        """Replace the text of a synset definition by its index.
+
+        Args:
+            synset_id: ID of the synset.
+            definition_index: Zero-based index among the synset's definitions.
+            text: New definition text.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+            IndexError: *definition_index* out of range.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1366,6 +1739,16 @@ class WordnetEditor:
     def remove_definition(
         self, synset_id: str, definition_index: int
     ) -> None:
+        """Remove a definition from a synset by its index.
+
+        Args:
+            synset_id: ID of the synset.
+            definition_index: Zero-based index of the definition to remove.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+            IndexError: *definition_index* out of range.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1399,6 +1782,17 @@ class WordnetEditor:
         language: str | None = None,
         metadata: dict | None = None,
     ) -> None:
+        """Add a usage example to a synset.
+
+        Args:
+            synset_id: ID of the synset.
+            text: Example text.
+            language: Optional BCP-47 language tag.
+            metadata: Optional metadata dict.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1418,6 +1812,16 @@ class WordnetEditor:
     def remove_synset_example(
         self, synset_id: str, example_index: int
     ) -> None:
+        """Remove a usage example from a synset by its index.
+
+        Args:
+            synset_id: ID of the synset.
+            example_index: Zero-based index of the example to remove.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+            IndexError: *example_index* out of range.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1452,6 +1856,17 @@ class WordnetEditor:
         language: str | None = None,
         metadata: dict | None = None,
     ) -> None:
+        """Add a usage example to a sense.
+
+        Args:
+            sense_id: ID of the sense.
+            text: Example text.
+            language: Optional BCP-47 language tag.
+            metadata: Optional metadata dict.
+
+        Raises:
+            EntityNotFoundError: Sense not found.
+        """
         row = _db.get_sense_row(self._conn, sense_id)
         if row is None:
             raise EntityNotFoundError(f"Sense not found: {sense_id!r}")
@@ -1471,6 +1886,16 @@ class WordnetEditor:
     def remove_sense_example(
         self, sense_id: str, example_index: int
     ) -> None:
+        """Remove a usage example from a sense by its index.
+
+        Args:
+            sense_id: ID of the sense.
+            example_index: Zero-based index of the example to remove.
+
+        Raises:
+            EntityNotFoundError: Sense not found.
+            IndexError: *example_index* out of range.
+        """
         row = _db.get_sense_row(self._conn, sense_id)
         if row is None:
             raise EntityNotFoundError(f"Sense not found: {sense_id!r}")
@@ -1497,6 +1922,17 @@ class WordnetEditor:
         )
 
     def get_definitions(self, synset_id: str) -> list[DefinitionModel]:
+        """Return all definitions of a synset, ordered by insertion.
+
+        Args:
+            synset_id: ID of the synset.
+
+        Returns:
+            List of definitions (may be empty).
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1524,6 +1960,17 @@ class WordnetEditor:
         return result
 
     def get_synset_examples(self, synset_id: str) -> list[ExampleModel]:
+        """Return all usage examples of a synset.
+
+        Args:
+            synset_id: ID of the synset.
+
+        Returns:
+            List of examples (may be empty).
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1547,6 +1994,17 @@ class WordnetEditor:
         return result
 
     def get_sense_examples(self, sense_id: str) -> list[ExampleModel]:
+        """Return all usage examples of a sense.
+
+        Args:
+            sense_id: ID of the sense.
+
+        Returns:
+            List of examples (may be empty).
+
+        Raises:
+            EntityNotFoundError: Sense not found.
+        """
         row = _db.get_sense_row(self._conn, sense_id)
         if row is None:
             raise EntityNotFoundError(f"Sense not found: {sense_id!r}")
@@ -1583,6 +2041,23 @@ class WordnetEditor:
         auto_inverse: bool = True,
         metadata: dict | None = None,
     ) -> None:
+        """Add a directed relation between two synsets.
+
+        When *auto_inverse* is ``True`` (the default), the corresponding
+        inverse relation (e.g. ``hyponym`` for ``hypernym``) is also created
+        automatically.  Duplicate relations are silently ignored.
+
+        Args:
+            source_id: Source synset ID.
+            relation_type: Relation type string (see ``SynsetRelationType``).
+            target_id: Target synset ID.
+            auto_inverse: Create the inverse relation automatically.
+            metadata: Optional metadata dict for the relation.
+
+        Raises:
+            ValidationError: Invalid relation type or self-referential.
+            EntityNotFoundError: Source or target synset not found.
+        """
         if not is_valid_synset_relation(relation_type):
             raise ValidationError(
                 f"Invalid synset relation type: {relation_type!r}"
@@ -1643,6 +2118,17 @@ class WordnetEditor:
         *,
         auto_inverse: bool = True,
     ) -> None:
+        """Remove a directed relation between two synsets.
+
+        When *auto_inverse* is ``True``, the inverse relation is also removed.
+        No-op if the relation does not exist.
+
+        Args:
+            source_id: Source synset ID.
+            relation_type: Relation type string.
+            target_id: Target synset ID.
+            auto_inverse: Also remove the inverse relation.
+        """
         src_row = _db.get_synset_row(self._conn, source_id)
         tgt_row = _db.get_synset_row(self._conn, target_id)
         if src_row is None or tgt_row is None:
@@ -1692,6 +2178,22 @@ class WordnetEditor:
         auto_inverse: bool = True,
         metadata: dict | None = None,
     ) -> None:
+        """Add a directed relation between two senses.
+
+        When *auto_inverse* is ``True``, the inverse relation is also created.
+        Duplicate relations are silently ignored.
+
+        Args:
+            source_id: Source sense ID.
+            relation_type: Relation type string (see ``SenseRelationType``).
+            target_id: Target sense ID.
+            auto_inverse: Create the inverse relation automatically.
+            metadata: Optional metadata dict for the relation.
+
+        Raises:
+            ValidationError: Invalid relation type or self-referential.
+            EntityNotFoundError: Source or target sense not found.
+        """
         if not is_valid_sense_relation(relation_type):
             raise ValidationError(
                 f"Invalid sense relation type: {relation_type!r}"
@@ -1751,6 +2253,17 @@ class WordnetEditor:
         *,
         auto_inverse: bool = True,
     ) -> None:
+        """Remove a directed relation between two senses.
+
+        When *auto_inverse* is ``True``, the inverse relation is also removed.
+        No-op if the relation does not exist.
+
+        Args:
+            source_id: Source sense ID.
+            relation_type: Relation type string.
+            target_id: Target sense ID.
+            auto_inverse: Also remove the inverse relation.
+        """
         src_row = _db.get_sense_row(self._conn, source_id)
         tgt_row = _db.get_sense_row(self._conn, target_id)
         if src_row is None or tgt_row is None:
@@ -1794,6 +2307,21 @@ class WordnetEditor:
         *,
         metadata: dict | None = None,
     ) -> None:
+        """Add a relation from a sense to a synset.
+
+        Duplicate relations are silently ignored.
+
+        Args:
+            source_sense_id: Source sense ID.
+            relation_type: Relation type string (see
+                ``SenseSynsetRelationType``).
+            target_synset_id: Target synset ID.
+            metadata: Optional metadata dict.
+
+        Raises:
+            ValidationError: Invalid relation type.
+            EntityNotFoundError: Sense or synset not found.
+        """
         if not is_valid_sense_synset_relation(relation_type):
             raise ValidationError(
                 f"Invalid sense-synset relation type: {relation_type!r}"
@@ -1831,6 +2359,15 @@ class WordnetEditor:
         relation_type: str,
         target_synset_id: str,
     ) -> None:
+        """Remove a relation from a sense to a synset.
+
+        No-op if the relation does not exist.
+
+        Args:
+            source_sense_id: Source sense ID.
+            relation_type: Relation type string.
+            target_synset_id: Target synset ID.
+        """
         src_row = _db.get_sense_row(self._conn, source_sense_id)
         tgt_row = _db.get_synset_row(self._conn, target_synset_id)
         if src_row is None or tgt_row is None:
@@ -1855,6 +2392,18 @@ class WordnetEditor:
         *,
         relation_type: str | None = None,
     ) -> list[RelationModel]:
+        """Return outgoing relations from a synset.
+
+        Args:
+            synset_id: ID of the source synset.
+            relation_type: Optional filter by relation type.
+
+        Returns:
+            List of outgoing relations (may be empty).
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1897,6 +2446,18 @@ class WordnetEditor:
         *,
         relation_type: str | None = None,
     ) -> list[RelationModel]:
+        """Return outgoing relations from a sense.
+
+        Args:
+            sense_id: ID of the source sense.
+            relation_type: Optional filter by relation type.
+
+        Returns:
+            List of outgoing relations (may be empty).
+
+        Raises:
+            EntityNotFoundError: Sense not found.
+        """
         row = _db.get_sense_row(self._conn, sense_id)
         if row is None:
             raise EntityNotFoundError(f"Sense not found: {sense_id!r}")
@@ -1939,6 +2500,16 @@ class WordnetEditor:
 
     @_modifies_db
     def link_ili(self, synset_id: str, ili_id: str) -> None:
+        """Link a synset to an existing ILI entry.
+
+        Args:
+            synset_id: ID of the synset.
+            ili_id: ILI identifier (e.g. ``"i12345"``).
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+            ValidationError: Synset already has an ILI or proposed ILI.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1968,6 +2539,14 @@ class WordnetEditor:
 
     @_modifies_db
     def unlink_ili(self, synset_id: str) -> None:
+        """Remove the ILI mapping (or proposed ILI) from a synset.
+
+        Args:
+            synset_id: ID of the synset.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -1994,6 +2573,18 @@ class WordnetEditor:
         *,
         metadata: dict | None = None,
     ) -> None:
+        """Propose a new ILI entry for a synset.
+
+        Args:
+            synset_id: ID of the synset.
+            definition: ILI definition (minimum 20 characters).
+            metadata: Optional metadata dict.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+            ValidationError: Synset already has an ILI or proposed ILI, or
+                definition is too short.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -2029,10 +2620,18 @@ class WordnetEditor:
             {"definition": definition, "type": "proposed"},
         )
 
-    def get_ili(self, synset_id: str) -> Any:
-        """Get ILI mapping for a synset, or None."""
-        from wordnet_editor.models import ILIModel
+    def get_ili(self, synset_id: str) -> ILIModel | None:
+        """Get the ILI mapping for a synset.
 
+        Args:
+            synset_id: ID of the synset.
+
+        Returns:
+            The ILI mapping, or ``None`` if the synset has no ILI.
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -2068,6 +2667,21 @@ class WordnetEditor:
         key: str,
         value: str | float | None,
     ) -> None:
+        """Set or delete a single metadata key on any entity.
+
+        Pass ``None`` as *value* to delete the key.
+
+        Args:
+            entity_type: One of ``"lexicon"``, ``"synset"``, ``"entry"``,
+                ``"sense"``.
+            entity_id: ID of the entity.
+            key: Metadata key.
+            value: Value to set, or ``None`` to delete the key.
+
+        Raises:
+            EntityNotFoundError: Entity not found.
+            ValidationError: Unknown *entity_type*.
+        """
         table, id_col = self._resolve_entity_table(entity_type)
         row = self._conn.execute(
             f"SELECT rowid, metadata FROM {table} WHERE {id_col} = ?",
@@ -2095,6 +2709,20 @@ class WordnetEditor:
         )
 
     def get_metadata(self, entity_type: str, entity_id: str) -> dict:
+        """Return the full metadata dict for an entity.
+
+        Args:
+            entity_type: One of ``"lexicon"``, ``"synset"``, ``"entry"``,
+                ``"sense"``.
+            entity_id: ID of the entity.
+
+        Returns:
+            Metadata dict (empty dict if no metadata is set).
+
+        Raises:
+            EntityNotFoundError: Entity not found.
+            ValidationError: Unknown *entity_type*.
+        """
         table, id_col = self._resolve_entity_table(entity_type)
         row = self._conn.execute(
             f"SELECT metadata FROM {table} WHERE {id_col} = ?",
@@ -2113,6 +2741,18 @@ class WordnetEditor:
     def set_confidence(
         self, entity_type: str, entity_id: str, score: float
     ) -> None:
+        """Set the ``confidenceScore`` metadata key on an entity.
+
+        Args:
+            entity_type: One of ``"lexicon"``, ``"synset"``, ``"entry"``,
+                ``"sense"``.
+            entity_id: ID of the entity.
+            score: Confidence score (typically 0.0 to 1.0).
+
+        Raises:
+            EntityNotFoundError: Entity not found.
+            ValidationError: Unknown *entity_type*.
+        """
         self.set_metadata(entity_type, entity_id, "confidenceScore", score)
 
     def _resolve_entity_table(
@@ -2137,6 +2777,23 @@ class WordnetEditor:
     def merge_synsets(
         self, source_id: str, target_id: str
     ) -> SynsetModel:
+        """Merge two synsets atomically.
+
+        Moves all senses, definitions, examples, and relations from the
+        source synset into the target synset, then deletes the source.
+        Duplicate definitions and self-loop relations are removed.
+
+        Args:
+            source_id: ID of the synset to merge from (will be deleted).
+            target_id: ID of the synset to merge into (will be kept).
+
+        Returns:
+            The updated target synset.
+
+        Raises:
+            EntityNotFoundError: Source or target synset not found.
+            ConflictError: Both synsets have ILI mappings.
+        """
         src = _db.get_synset_row(self._conn, source_id)
         if src is None:
             raise EntityNotFoundError(f"Synset not found: {source_id!r}")
@@ -2313,6 +2970,25 @@ class WordnetEditor:
     def split_synset(
         self, synset_id: str, sense_groups: list[list[str]]
     ) -> list[SynsetModel]:
+        """Split a synset into multiple synsets atomically.
+
+        The first group keeps the original synset.  Each subsequent group
+        creates a new synset and moves its senses there.  Outgoing relations
+        are copied to all new synsets.
+
+        Args:
+            synset_id: ID of the synset to split.
+            sense_groups: List of sense-ID lists.  Must partition the synset's
+                senses exactly and contain at least 2 groups.
+
+        Returns:
+            List of resulting synsets (original first, then new ones).
+
+        Raises:
+            EntityNotFoundError: Synset not found.
+            ValidationError: Groups don't partition the senses exactly, or
+                fewer than 2 groups provided.
+        """
         row = _db.get_synset_row(self._conn, synset_id)
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
@@ -2410,6 +3086,20 @@ class WordnetEditor:
         since: str | None = None,
         operation: str | None = None,
     ) -> list[EditRecord]:
+        """Query the edit history log.
+
+        All parameters are optional; when omitted the full history is returned.
+
+        Args:
+            entity_type: Filter by entity type (e.g. ``"synset"``).
+            entity_id: Filter by entity ID.
+            since: ISO-8601 timestamp; return only records after this time.
+            operation: Filter by operation (``"CREATE"``, ``"UPDATE"``,
+                ``"DELETE"``).
+
+        Returns:
+            List of edit records matching the filters.
+        """
         return _hist.query_history(
             self._conn,
             entity_type=entity_type,
@@ -2419,6 +3109,14 @@ class WordnetEditor:
         )
 
     def get_changes_since(self, timestamp: str) -> list[EditRecord]:
+        """Return all edit records after the given timestamp.
+
+        Args:
+            timestamp: ISO-8601 timestamp.
+
+        Returns:
+            List of edit records since *timestamp*.
+        """
         return self.get_history(since=timestamp)
 
     # ------------------------------------------------------------------
@@ -2428,20 +3126,52 @@ class WordnetEditor:
     def validate(
         self, *, lexicon_id: str | None = None
     ) -> list[ValidationResult]:
+        """Run all 22 validation rules and return any findings.
+
+        Args:
+            lexicon_id: Optionally restrict validation to one lexicon.
+
+        Returns:
+            List of validation results (errors and warnings).
+        """
         from wordnet_editor.validator import validate_all
         return validate_all(self._conn, lexicon_id=lexicon_id)
 
     def validate_synset(self, synset_id: str) -> list[ValidationResult]:
+        """Run validation rules scoped to a single synset.
+
+        Args:
+            synset_id: ID of the synset to validate.
+
+        Returns:
+            List of validation results for this synset.
+        """
         from wordnet_editor.validator import validate_synset
         return validate_synset(self._conn, synset_id)
 
     def validate_entry(self, entry_id: str) -> list[ValidationResult]:
+        """Run validation rules scoped to a single entry.
+
+        Args:
+            entry_id: ID of the entry to validate.
+
+        Returns:
+            List of validation results for this entry.
+        """
         from wordnet_editor.validator import validate_entry
         return validate_entry(self._conn, entry_id)
 
     def validate_relations(
         self, *, lexicon_id: str | None = None
     ) -> list[ValidationResult]:
+        """Run relation-specific validation rules (e.g. missing inverses).
+
+        Args:
+            lexicon_id: Optionally restrict to one lexicon.
+
+        Returns:
+            List of validation results for relations.
+        """
         from wordnet_editor.validator import validate_relations
         return validate_relations(self._conn, lexicon_id=lexicon_id)
 
@@ -2464,6 +3194,27 @@ class WordnetEditor:
         url: str | None = None,
         citation: str | None = None,
     ) -> WordnetEditor:
+        """Create an editor pre-loaded from the ``wn`` library.
+
+        Args:
+            lexicon: Lexicon specifier understood by ``wn`` (e.g.
+                ``"ewn:2024"``).
+            db_path: Path for the editor's own database.
+            record_history: Record import operations in edit history.
+            version: Override the imported lexicon's version.
+            label: Override the imported lexicon's label.
+            lexicon_id: Override the imported lexicon's ID.
+            email: Override the imported lexicon's email.
+            license: Override the imported lexicon's license.
+            url: Override the imported lexicon's URL.
+            citation: Override the imported lexicon's citation.
+
+        Returns:
+            A new editor instance with the imported data.
+
+        Raises:
+            DataImportError: Import failed.
+        """
         from wordnet_editor.importer import import_from_wn
 
         editor = cls(db_path)
@@ -2491,6 +3242,19 @@ class WordnetEditor:
         *,
         record_history: bool = True,
     ) -> WordnetEditor:
+        """Create an editor pre-loaded from a WN-LMF XML file.
+
+        Args:
+            source: Path to the WN-LMF XML file.
+            db_path: Path for the editor's own database.
+            record_history: Record import operations in edit history.
+
+        Returns:
+            A new editor instance with the imported data.
+
+        Raises:
+            DataImportError: Import failed (e.g. malformed XML).
+        """
         from wordnet_editor.importer import import_from_lmf
 
         editor = cls(db_path)
@@ -2499,6 +3263,14 @@ class WordnetEditor:
 
     @_modifies_db
     def import_lmf(self, source: str | Path) -> None:
+        """Import additional data from a WN-LMF XML file into this editor.
+
+        Args:
+            source: Path to the WN-LMF XML file.
+
+        Raises:
+            DataImportError: Import failed.
+        """
         from wordnet_editor.importer import import_from_lmf
         import_from_lmf(self._conn, source, record_history=True)
 
@@ -2509,6 +3281,16 @@ class WordnetEditor:
         lexicon_ids: list[str] | None = None,
         lmf_version: str = "1.4",
     ) -> None:
+        """Export the database to a WN-LMF XML file.
+
+        Args:
+            destination: Output file path.
+            lexicon_ids: Optionally export only specific lexicons.
+            lmf_version: LMF schema version (default ``"1.4"``).
+
+        Raises:
+            ExportError: Validation errors found in output data.
+        """
         from wordnet_editor.exporter import export_to_lmf
         export_to_lmf(
             self._conn, destination,
@@ -2521,6 +3303,17 @@ class WordnetEditor:
         db_path: str | Path | None = None,
         lexicon_ids: list[str] | None = None,
     ) -> None:
+        """Push changes back into the ``wn`` library's database.
+
+        Exports to a temporary LMF file and imports it via ``wn.add()``.
+
+        Args:
+            db_path: Optional ``wn`` database path (uses default if omitted).
+            lexicon_ids: Optionally export only specific lexicons.
+
+        Raises:
+            ExportError: Validation errors found in output data.
+        """
         from wordnet_editor.exporter import commit_to_wn
         commit_to_wn(
             self._conn, db_path=db_path, lexicon_ids=lexicon_ids,
