@@ -1,6 +1,12 @@
 # wordnet-editor
 
+[![PyPI version](https://img.shields.io/pypi/v/wn-editor-extended.svg)](https://pypi.org/project/wn-editor-extended/)
+[![Python 3.10+](https://img.shields.io/pypi/pyversions/wn-editor-extended.svg)](https://pypi.org/project/wn-editor-extended/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 A pure Python editing library for WordNets. Provides a complete programmatic API for creating, modifying, and exporting WordNet data in the [WN-LMF 1.4](https://globalwordnet.github.io/schemas/) format.
+
+**PyPI package:** [`wn-editor-extended`](https://pypi.org/project/wn-editor-extended/) | **Import:** `from wordnet_editor import WordnetEditor`
 
 ## What it does
 
@@ -64,21 +70,8 @@ with WordnetEditor("my_edits.db") as editor:
 
 ## Installation
 
-### Development setup
-
 ```bash
-git clone <repo-url>
-cd wordnet-editor
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-### Run tests
-
-```bash
-source .venv/bin/activate
-pytest
+pip install wn-editor-extended
 ```
 
 ### Requirements
@@ -87,6 +80,17 @@ pytest
 - [`wn`](https://github.com/goodmami/wn) >= 1.0.0
 
 No other third-party dependencies.
+
+### Development setup
+
+```bash
+git clone https://github.com/Salah-Sal/wn-editor-extended.git
+cd wn-editor-extended
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
 
 ## Key concepts
 
@@ -216,15 +220,16 @@ This repository contains the complete architecture and design specifications:
 
 | Document | Description |
 |----------|-------------|
-| [`models.md`](models.md) | Domain dataclasses, enums, and inverse relation map |
-| [`schema.md`](schema.md) | SQLite database schema (DDL, indexes, constraints) |
-| [`behavior.md`](behavior.md) | ~40 behavioral rules (deletion cascades, auto-inverse, merge/split/move) |
-| [`api.md`](api.md) | Full public API — every method with signatures, parameters, and examples |
-| [`pipeline.md`](pipeline.md) | Import/export pipeline (step-by-step SQL, round-trip fidelity) |
-| [`validation.md`](validation.md) | 23 validation rules with severity levels |
-| [`architecture.md`](architecture.md) | System overview, component diagram, data flows, design rationale |
-| [`packaging.md`](packaging.md) | Directory layout, `pyproject.toml`, public API surface |
-| [`testplan.md`](testplan.md) | ~65 structured test scenarios |
+| [`api-reference.md`](docs/api-reference.md) | Full public API reference with signatures and examples |
+| [`models.md`](docs/design/models.md) | Domain dataclasses, enums, and inverse relation map |
+| [`schema.md`](docs/design/schema.md) | SQLite database schema (DDL, indexes, constraints) |
+| [`behavior.md`](docs/design/behavior.md) | ~40 behavioral rules (deletion cascades, auto-inverse, merge/split/move) |
+| [`api.md`](docs/design/api.md) | API design specification |
+| [`pipeline.md`](docs/design/pipeline.md) | Import/export pipeline (step-by-step SQL, round-trip fidelity) |
+| [`validation.md`](docs/design/validation.md) | 23 validation rules with severity levels |
+| [`architecture.md`](docs/design/architecture.md) | System overview, component diagram, data flows, design rationale |
+| [`packaging.md`](docs/design/packaging.md) | Directory layout, `pyproject.toml`, public API surface |
+| [`testplan.md`](docs/design/testplan.md) | ~65 structured test scenarios |
 
 ## Architecture
 
