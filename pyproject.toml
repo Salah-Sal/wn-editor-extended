@@ -46,6 +46,14 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/wordnet_editor"]
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "wn-agent/**",
+    ".venv/**",
+    "data/**",
+    "*.db",
+]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 88
