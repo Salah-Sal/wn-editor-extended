@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE LexicalResource SYSTEM "https://globalwordnet.github.io/schemas/WN-LMF-1.1.dtd">
+<LexicalResource xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <Lexicon id="test-base"
+           label="Test Base"
+           language="en"
+           email="test@test.com"
+           license="https://opensource.org/licenses/MIT"
+           version="1.0">
+    <LexicalEntry id="test-base-cat-n">
+      <Lemma writtenForm="cat" partOfSpeech="n"/>
+      <Sense id="test-base-cat-n-01" synset="test-base-00000001-n"/>
+    </LexicalEntry>
+    <Synset id="test-base-00000001-n" ili="" partOfSpeech="n">
+      <Definition>A small domesticated feline mammal</Definition>
+    </Synset>
+  </Lexicon>
+  <Lexicon id="test-ext"
+           label="Test Extension"
+           language="en"
+           email="test@test.com"
+           license="https://opensource.org/licenses/MIT"
+           version="1.0">
+    <Requires id="test-base" version="1.0"/>
+    <LexicalEntry id="test-ext-kitten-n">
+      <Lemma writtenForm="kitten" partOfSpeech="n"/>
+      <Sense id="test-ext-kitten-n-01" synset="test-base-00000001-n"/>
+    </LexicalEntry>
+  </Lexicon>
+</LexicalResource>

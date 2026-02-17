@@ -1,6 +1,7 @@
 wn/
 wn_edit/
 wn-editor-extended/
+CLAUDE.md
 __pycache__/
 *.pyc
 *.egg-info/

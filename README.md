@@ -63,7 +63,26 @@ with WordnetEditor("my_edits.db") as editor:
     editor.commit_to_wn()
 ```
 
-## Requirements
+## Installation
+
+### Development setup
+
+```bash
+git clone <repo-url>
+cd wordnet-editor
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### Run tests
+
+```bash
+source .venv/bin/activate
+pytest
+```
+
+### Requirements
 
 - Python >= 3.10
 - [`wn`](https://github.com/goodmami/wn) >= 1.0.0

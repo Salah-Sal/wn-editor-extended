@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE LexicalResource SYSTEM "https://globalwordnet.github.io/schemas/WN-LMF-1.1.dtd">
+<LexicalResource xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <Lexicon id="lex-en"
+           label="English Test"
+           language="en"
+           email="test@test.com"
+           license="https://opensource.org/licenses/MIT"
+           version="1.0">
+    <LexicalEntry id="lex-en-cat-n">
+      <Lemma writtenForm="cat" partOfSpeech="n"/>
+      <Sense id="lex-en-cat-n-01" synset="lex-en-00000001-n"/>
+    </LexicalEntry>
+    <Synset id="lex-en-00000001-n" ili="" partOfSpeech="n">
+      <Definition>A small domesticated feline mammal</Definition>
+    </Synset>
+  </Lexicon>
+  <Lexicon id="lex-fr"
+           label="French Test"
+           language="fr"
+           email="test@test.com"
+           license="https://opensource.org/licenses/MIT"
+           version="1.0">
+    <LexicalEntry id="lex-fr-chat-n">
+      <Lemma writtenForm="chat" partOfSpeech="n"/>
+      <Sense id="lex-fr-chat-n-01" synset="lex-fr-00000001-n">
+        <SenseRelation relType="similar" target="lex-en-cat-n-01"/>
+      </Sense>
+    </LexicalEntry>
+    <Synset id="lex-fr-00000001-n" ili="" partOfSpeech="n">
+      <Definition>Un petit mammifère félin domestiqué</Definition>
+      <SynsetRelation relType="eq_synonym" target="lex-en-00000001-n"/>
+    </Synset>
+  </Lexicon>
+</LexicalResource>

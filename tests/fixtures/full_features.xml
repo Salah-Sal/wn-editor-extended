@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE LexicalResource SYSTEM "https://globalwordnet.github.io/schemas/WN-LMF-1.1.dtd">
+<LexicalResource xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <Lexicon id="test-full"
+           label="Test Full Features"
+           language="en"
+           email="test@test.com"
+           license="https://opensource.org/licenses/MIT"
+           version="1.0"
+           url="https://example.com/wordnet"
+           citation="Test Citation (2024)">
+    <LexicalEntry id="test-full-cat-n">
+      <Lemma writtenForm="cat" partOfSpeech="n">
+        <Pronunciation variety="US" notation="IPA">/kæt/</Pronunciation>
+        <Pronunciation variety="UK" notation="IPA">/kæt/</Pronunciation>
+        <Tag category="frequency">high</Tag>
+      </Lemma>
+      <Form writtenForm="cats" id="test-full-cats">
+        <Pronunciation notation="IPA">/kæts/</Pronunciation>
+        <Tag category="inflection">plural</Tag>
+      </Form>
+      <Sense id="test-full-cat-n-01" synset="test-full-00000001-n" n="1">
+        <SenseRelation relType="antonym" target="test-full-dog-n-01"/>
+        <Example>The cat sat on the mat.</Example>
+        <Count dc:source="BNC">4523</Count>
+      </Sense>
+      <Sense id="test-full-cat-n-02" synset="test-full-00000002-n" n="2"/>
+    </LexicalEntry>
+    <LexicalEntry id="test-full-dog-n">
+      <Lemma writtenForm="dog" partOfSpeech="n">
+        <Pronunciation variety="US" notation="IPA">/dɔːɡ/</Pronunciation>
+      </Lemma>
+      <Sense id="test-full-dog-n-01" synset="test-full-00000003-n" n="1">
+        <SenseRelation relType="antonym" target="test-full-cat-n-01"/>
+      </Sense>
+    </LexicalEntry>
+    <LexicalEntry id="test-full-run-v">
+      <Lemma writtenForm="run" partOfSpeech="v"/>
+      <Form writtenForm="runs"/>
+      <Form writtenForm="ran"/>
+      <Form writtenForm="running"/>
+      <Sense id="test-full-run-v-01" synset="test-full-00000004-v" n="1" subcat="test-full-frame-1"/>
+    </LexicalEntry>
+    <Synset id="test-full-00000001-n" ili="i90287" partOfSpeech="n">
+      <Definition>A small domesticated feline mammal kept as a pet</Definition>
+      <Example>She has three cats at home.</Example>
+      <SynsetRelation relType="hypernym" target="test-full-00000005-n"/>
+    </Synset>
+    <Synset id="test-full-00000002-n" ili="" partOfSpeech="n">
+      <Definition>A person, especially a man</Definition>
+    </Synset>
+    <Synset id="test-full-00000003-n" ili="i90288" partOfSpeech="n">
+      <Definition>A domesticated canid</Definition>
+      <SynsetRelation relType="hypernym" target="test-full-00000005-n"/>
+    </Synset>
+    <Synset id="test-full-00000004-v" ili="" partOfSpeech="v">
+      <Definition>To move swiftly on foot</Definition>
+      <Definition language="es">Moverse rápidamente a pie</Definition>
+      <Example>He runs every morning.</Example>
+    </Synset>
+    <Synset id="test-full-00000005-n" ili="" partOfSpeech="n">
+      <Definition>A warm-blooded vertebrate animal</Definition>
+    </Synset>
+    <SyntacticBehaviour id="test-full-frame-1" subcategorizationFrame="Somebody ----s" senses="test-full-run-v-01"/>
+  </Lexicon>
+</LexicalResource>
