@@ -598,34 +598,56 @@ def _import_lexicon(
     # Build synset ID -> rowid mapping
     synset_id_to_rowid: dict[str, int] = {}
 
-    # Insert synsets
+    # Pre-fetch lexfiles
+    lexfile_map: dict[str, int] = {
+        row["name"]: row["rowid"]
+        for row in conn.execute("SELECT name, rowid FROM lexfiles").fetchall()
+    }
+
+    # Prepare bulk synset insert
+    synset_params = []
+    proposed_ili_params = []
+    unlex_params = []
+
+    # Store dependent data keyed by synset ID to resolve rowid later
+    proposed_ili_data: dict[str, tuple] = {}
+    unlex_data: set[str] = set()
+
+    # Cache ILI status
+    ili_status_rowid = conn.execute(
+        "SELECT rowid FROM ili_statuses WHERE status = 'presupposed'"
+    ).fetchone()[0]
+
     for syn in lex.get("synsets", []):
+        syn_id = syn["id"]
         ili_str = syn.get("ili", "")
+
         ili_rowid = None
-        if ili_str and ili_str != "in" and ili_str != "":
-            ili_rowid = _db.get_or_create_ili(conn, ili_str)
+        if ili_str and ili_str != "in":
+            # Inline get_or_create_ili with cached status
+            conn.execute(
+                "INSERT OR IGNORE INTO ilis (id, status_rowid) VALUES (?, ?)",
+                (ili_str, ili_status_rowid),
+            )
+            ili_rowid = conn.execute(
+                "SELECT rowid FROM ilis WHERE id = ?",
+                (ili_str,),
+            ).fetchone()[0]
 
         lexfile_rowid = None
         lf = syn.get("lexfile", "")
         if lf:
-            lexfile_rowid = conn.execute(
-                "SELECT rowid FROM lexfiles WHERE name = ?", (lf,)
-            ).fetchone()[0]
+            lexfile_rowid = lexfile_map.get(lf)
 
         syn_meta = syn.get("meta")
-        conn.execute(
-            "INSERT INTO synsets (id, lexicon_rowid, ili_rowid, pos, lexfile_rowid, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (syn["id"], lex_rowid, ili_rowid,
-             syn.get("partOfSpeech") or None,
-             lexfile_rowid,
-             json.dumps(syn_meta) if syn_meta else None),
-        )
-        syn_rowid = conn.execute(
-            "SELECT rowid FROM synsets WHERE id = ? AND lexicon_rowid = ?",
-            (syn["id"], lex_rowid),
-        ).fetchone()[0]
-        synset_id_to_rowid[syn["id"]] = syn_rowid
+        synset_params.append((
+            syn_id,
+            lex_rowid,
+            ili_rowid,
+            syn.get("partOfSpeech") or None,
+            lexfile_rowid,
+            json.dumps(syn_meta) if syn_meta else None
+        ))
 
         # Proposed ILI
         if ili_str == "in":
@@ -636,22 +658,61 @@ def _import_lexicon(
             else:
                 def_text = str(ili_def)
                 def_meta = None
-            conn.execute(
-                "INSERT INTO proposed_ilis (synset_rowid, definition, metadata) "
-                "VALUES (?, ?, ?)",
-                (syn_rowid, def_text,
-                 json.dumps(def_meta) if def_meta else None),
+            proposed_ili_data[syn_id] = (
+                def_text,
+                json.dumps(def_meta) if def_meta else None
             )
 
         # Unlexicalized
         if not syn.get("lexicalized", True):
-            conn.execute(
+            unlex_data.add(syn_id)
+
+    # Bulk insert synsets
+    if synset_params:
+        conn.executemany(
+            "INSERT INTO synsets (id, lexicon_rowid, ili_rowid, pos, lexfile_rowid, metadata) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            synset_params,
+        )
+
+        # Recover rowids
+        cur = conn.cursor()
+        cur.row_factory = None
+        synset_id_to_rowid = dict(
+            cur.execute(
+                "SELECT id, rowid FROM synsets WHERE lexicon_rowid = ?",
+                (lex_rowid,),
+            ).fetchall()
+        )
+
+        # Prepare dependent inserts
+        for syn_id, (def_text, def_meta_json) in proposed_ili_data.items():
+            s_rowid = synset_id_to_rowid.get(syn_id)
+            if s_rowid:
+                proposed_ili_params.append((s_rowid, def_text, def_meta_json))
+
+        for syn_id in unlex_data:
+            s_rowid = synset_id_to_rowid.get(syn_id)
+            if s_rowid:
+                unlex_params.append((s_rowid,))
+
+        if proposed_ili_params:
+            conn.executemany(
+                "INSERT INTO proposed_ilis (synset_rowid, definition, metadata) "
+                "VALUES (?, ?, ?)",
+                proposed_ili_params,
+            )
+
+        if unlex_params:
+            conn.executemany(
                 "INSERT INTO unlexicalized_synsets (synset_rowid) VALUES (?)",
-                (syn_rowid,),
+                unlex_params,
             )
 
         if record_history:
-            _hist.record_create(conn, "synset", syn["id"])
+            # History recording (still sequential as API doesn't support bulk)
+            for syn_id, _, _, _, _, _ in synset_params:
+                _hist.record_create(conn, "synset", syn_id)
 
     # Insert entries and their children
     sense_id_to_rowid: dict[str, int] = {}
