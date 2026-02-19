@@ -1207,12 +1207,31 @@ class WordnetEditor:
         if _db.get_entry_rowid(self._conn, base_id) is None:
             return base_id
 
+        # Get all existing IDs that match the base_id-{n} pattern
+        # Escape special LIKE characters: \ -> \\, _ -> \_, % -> \%
+        escaped_base = base_id.replace("\\", "\\\\").replace("_", r"\_").replace("%", r"\%")
+        rows = self._conn.execute(
+            "SELECT id FROM entries WHERE id LIKE ? ESCAPE '\\'",
+            (f"{escaped_base}-%",),
+        ).fetchall()
+
+        existing_suffixes = set()
+        prefix_len = len(base_id) + 1  # length of "base_id-"
+        for row in rows:
+            candidate_id = row["id"]
+            # Double check prefix to be absolutely sure
+            if not candidate_id.startswith(f"{base_id}-"):
+                continue
+
+            suffix = candidate_id[prefix_len:]
+            if suffix.isdigit():
+                existing_suffixes.add(int(suffix))
+
         n = 2
-        while True:
-            candidate = f"{base_id}-{n}"
-            if _db.get_entry_rowid(self._conn, candidate) is None:
-                return candidate
+        while n in existing_suffixes:
             n += 1
+
+        return f"{base_id}-{n}"
 
     # ------------------------------------------------------------------
     # Sense Operations (3.5)
