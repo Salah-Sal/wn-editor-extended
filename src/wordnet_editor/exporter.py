@@ -7,6 +7,7 @@ import logging
 import os
 import sqlite3
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -162,15 +163,91 @@ def _build_lexicon(
             _build_entry(conn, er, lex_rowid)
         )
 
+    # Pre-fetch synset data to avoid N+1 queries
+    definitions_map = defaultdict(list)
+    for row in conn.execute(
+        "SELECT d.synset_rowid, d.definition, d.language, d.metadata, "
+        "s.id as source_sense_id "
+        "FROM definitions d "
+        "LEFT JOIN senses s ON d.sense_rowid = s.rowid "
+        "WHERE d.lexicon_rowid = ? ORDER BY d.rowid",
+        (lex_rowid,),
+    ).fetchall():
+        definitions_map[row["synset_rowid"]].append(row)
+
+    examples_map = defaultdict(list)
+    for row in conn.execute(
+        "SELECT synset_rowid, example, language, metadata "
+        "FROM synset_examples WHERE lexicon_rowid = ? ORDER BY rowid",
+        (lex_rowid,),
+    ).fetchall():
+        examples_map[row["synset_rowid"]].append(row)
+
+    relations_map = defaultdict(list)
+    for row in conn.execute(
+        "SELECT sr.source_rowid, tgt.id as target_id, rt.type as rel_type, "
+        "sr.metadata "
+        "FROM synset_relations sr "
+        "JOIN synsets tgt ON sr.target_rowid = tgt.rowid "
+        "JOIN relation_types rt ON sr.type_rowid = rt.rowid "
+        "WHERE sr.lexicon_rowid = ?",
+        (lex_rowid,),
+    ).fetchall():
+        relations_map[row["source_rowid"]].append(row)
+
+    proposed_ili_map = {}
+    for row in conn.execute(
+        "SELECT p.synset_rowid, p.definition, p.metadata "
+        "FROM proposed_ilis p "
+        "JOIN synsets s ON p.synset_rowid = s.rowid "
+        "WHERE s.lexicon_rowid = ?",
+        (lex_rowid,),
+    ).fetchall():
+        proposed_ili_map[row["synset_rowid"]] = row
+
+    unlexicalized_set = set()
+    for row in conn.execute(
+        "SELECT u.synset_rowid "
+        "FROM unlexicalized_synsets u "
+        "JOIN synsets s ON u.synset_rowid = s.rowid "
+        "WHERE s.lexicon_rowid = ?",
+        (lex_rowid,),
+    ).fetchall():
+        unlexicalized_set.add(row["synset_rowid"])
+
+    members_map = defaultdict(list)
+    for row in conn.execute(
+        "SELECT s.synset_rowid, s.id "
+        "FROM senses s "
+        "JOIN synsets syn ON s.synset_rowid = syn.rowid "
+        "WHERE syn.lexicon_rowid = ? "
+        "ORDER BY s.synset_rank",
+        (lex_rowid,),
+    ).fetchall():
+        members_map[row["synset_rowid"]].append(row["id"])
+
     # Synsets
     synset_rows = conn.execute(
-        "SELECT rowid, * FROM synsets WHERE lexicon_rowid = ?",
+        "SELECT s.rowid, s.id, s.pos, s.metadata, i.id as ili_id, "
+        "lf.name as lexfile_name "
+        "FROM synsets s "
+        "LEFT JOIN ilis i ON s.ili_rowid = i.rowid "
+        "LEFT JOIN lexfiles lf ON s.lexfile_rowid = lf.rowid "
+        "WHERE s.lexicon_rowid = ?",
         (lex_rowid,),
     ).fetchall()
 
     for sr in synset_rows:
         lexicon["synsets"].append(
-            _build_synset(conn, sr, lex_rowid)
+            _build_synset(
+                sr,
+                definitions=definitions_map[sr["rowid"]],
+                examples=examples_map[sr["rowid"]],
+                relations=relations_map[sr["rowid"]],
+                proposed=proposed_ili_map.get(sr["rowid"]),
+                unlexicalized=sr["rowid"] in unlexicalized_set,
+                members=members_map[sr["rowid"]],
+            )
         )
 
     # Syntactic behaviours
@@ -396,71 +473,44 @@ def _build_sense(
 
 
 def _build_synset(
-    conn: sqlite3.Connection,
     sr: sqlite3.Row,
-    lex_rowid: int,
+    definitions: list[sqlite3.Row],
+    examples: list[sqlite3.Row],
+    relations: list[sqlite3.Row],
+    proposed: sqlite3.Row | None,
+    unlexicalized: bool,
+    members: list[str],
 ) -> dict:
     """Build a Synset TypedDict."""
-    syn_rowid = sr["rowid"]
     meta = sr["metadata"]
     if isinstance(meta, str):
         meta = json.loads(meta)
 
     # ILI
-    ili_str = ""
-    if sr["ili_rowid"]:
-        ili_row = conn.execute(
-            "SELECT id FROM ilis WHERE rowid = ?", (sr["ili_rowid"],)
-        ).fetchone()
-        if ili_row:
-            ili_str = ili_row["id"]
-
-    # Proposed ILI
-    proposed = conn.execute(
-        "SELECT definition, metadata FROM proposed_ilis WHERE synset_rowid = ?",
-        (syn_rowid,),
-    ).fetchone()
+    ili_str = sr["ili_id"] or ""
     if proposed:
         ili_str = "in"
 
     # Lexfile
-    lexfile = ""
-    if sr["lexfile_rowid"]:
-        lf_row = conn.execute(
-            "SELECT name FROM lexfiles WHERE rowid = ?",
-            (sr["lexfile_rowid"],),
-        ).fetchone()
-        if lf_row:
-            lexfile = lf_row["name"]
+    lexfile = sr["lexfile_name"] or ""
 
     # Definitions
     defs = []
-    for d in conn.execute(
-        "SELECT * FROM definitions WHERE synset_rowid = ? ORDER BY rowid",
-        (syn_rowid,),
-    ).fetchall():
+    for d in definitions:
         def_meta = d["metadata"]
         if isinstance(def_meta, str):
             def_meta = json.loads(def_meta)
         defn: dict[str, Any] = {"text": d["definition"] or ""}
         if d["language"]:
             defn["language"] = d["language"]
-        if d["sense_rowid"]:
-            s = conn.execute(
-                "SELECT id FROM senses WHERE rowid = ?",
-                (d["sense_rowid"],),
-            ).fetchone()
-            if s:
-                defn["sourceSense"] = s["id"]
+        if d["source_sense_id"]:
+            defn["sourceSense"] = d["source_sense_id"]
         defn["meta"] = def_meta
         defs.append(defn)
 
     # Examples
-    examples = []
-    for e in conn.execute(
-        "SELECT * FROM synset_examples WHERE synset_rowid = ? ORDER BY rowid",
-        (syn_rowid,),
-    ).fetchall():
+    exs = []
+    for e in examples:
         ex_meta = e["metadata"]
         if isinstance(ex_meta, str):
             ex_meta = json.loads(ex_meta)
@@ -468,55 +518,30 @@ def _build_synset(
         if e["language"]:
             ex["language"] = e["language"]
         ex["meta"] = ex_meta
-        examples.append(ex)
+        exs.append(ex)
 
     # Relations
-    relations = []
-    for rel in conn.execute(
-        "SELECT sr.*, rt.type FROM synset_relations sr "
-        "JOIN relation_types rt ON sr.type_rowid = rt.rowid "
-        "WHERE sr.source_rowid = ?",
-        (syn_rowid,),
-    ).fetchall():
-        tgt = conn.execute(
-            "SELECT id FROM synsets WHERE rowid = ?",
-            (rel["target_rowid"],),
-        ).fetchone()
-        if tgt:
-            rel_meta = rel["metadata"]
-            if isinstance(rel_meta, str):
-                rel_meta = json.loads(rel_meta)
-            relations.append({
-                "target": tgt["id"],
-                "relType": rel["type"],
-                "meta": rel_meta,
-            })
-
-    # Unlexicalized
-    unlex = conn.execute(
-        "SELECT 1 FROM unlexicalized_synsets WHERE synset_rowid = ?",
-        (syn_rowid,),
-    ).fetchone()
-
-    # Members
-    members = [
-        m["id"]
-        for m in conn.execute(
-            "SELECT id FROM senses WHERE synset_rowid = ? ORDER BY synset_rank",
-            (syn_rowid,),
-        ).fetchall()
-    ]
+    rels = []
+    for rel in relations:
+        rel_meta = rel["metadata"]
+        if isinstance(rel_meta, str):
+            rel_meta = json.loads(rel_meta)
+        rels.append({
+            "target": rel["target_id"],
+            "relType": rel["rel_type"],
+            "meta": rel_meta,
+        })
 
     synset: dict[str, Any] = {
         "id": sr["id"],
         "partOfSpeech": sr["pos"] or "",
         "ili": ili_str,
-        "lexicalized": unlex is None,
+        "lexicalized": not unlexicalized,
         "lexfile": lexfile,
         "meta": meta,
         "definitions": defs,
-        "relations": relations,
-        "examples": examples,
+        "relations": rels,
+        "examples": exs,
         "members": members,
     }
 
