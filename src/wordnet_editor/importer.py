@@ -595,6 +595,19 @@ def _import_lexicon(
     for lf in lexfile_names:
         _db.get_or_create_lexfile(conn, lf)
 
+    # Build relation type cache
+    rel_type_map = {
+        row_type: row_id
+        for row_type, row_id in conn.execute("SELECT type, rowid FROM relation_types")
+    }
+
+    def _get_rel_type_rowid(rel_type: str) -> int:
+        rowid = rel_type_map.get(rel_type)
+        if rowid is None:
+            rowid = _db.get_or_create_relation_type(conn, rel_type)
+            rel_type_map[rel_type] = rowid
+        return rowid
+
     # Build synset ID -> rowid mapping
     synset_id_to_rowid: dict[str, int] = {}
 
@@ -878,7 +891,7 @@ def _import_lexicon(
                 else:
                     continue
 
-            type_rowid = _db.get_or_create_relation_type(conn, rel["relType"])
+            type_rowid = _get_rel_type_rowid(rel["relType"])
             rel_meta = rel.get("meta")
             conn.execute(
                 "INSERT OR IGNORE INTO synset_relations "
@@ -896,7 +909,7 @@ def _import_lexicon(
                 continue
             for rel in sense.get("relations", []):
                 target_id = rel["target"]
-                type_rowid = _db.get_or_create_relation_type(conn, rel["relType"])
+                type_rowid = _get_rel_type_rowid(rel["relType"])
                 rel_meta = rel.get("meta")
 
                 # Is target a sense or a synset?
