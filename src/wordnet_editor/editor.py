@@ -51,6 +51,9 @@ _UNSET: Any = type("_UNSET", (), {"__repr__": lambda self: "..."})()
 # Valid POS values
 _VALID_POS = frozenset({"n", "v", "a", "r", "s", "t", "c", "p", "x", "u"})
 
+# Normalization regex for entry IDs
+_NORMALIZATION_REGEX = re.compile(r"[^\w\-]", flags=re.UNICODE)
+
 
 def _modifies_db(method: _F) -> _F:
     """Decorator: wraps mutation methods in a transaction (unless in batch)."""
@@ -1199,7 +1202,7 @@ class WordnetEditor:
         # Normalize: replace spaces with _, strip non-alnum except - and _
         normalized = lemma.lower()
         normalized = normalized.replace(" ", "_")
-        normalized = re.sub(r"[^\w\-]", "", normalized, flags=re.UNICODE)
+        normalized = _NORMALIZATION_REGEX.sub("", normalized)
         if not normalized:
             normalized = "entry"
 
