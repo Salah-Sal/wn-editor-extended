@@ -25,6 +25,11 @@ class TestUpdateDefinition:
         defs = ed.get_definitions(ss1.id)
         assert defs[0].text == "Updated definition text"
 
+    def test_update_definition_invalid_index(self, editor_with_data):
+        ed, ss1, ss2, e1, e2, s1, s2 = editor_with_data
+        with pytest.raises(IndexError):
+            ed.update_definition(ss1.id, 99, "Should fail")
+
 
 class TestRemoveDefinition:
     """TP-DEF-003."""
