@@ -45,6 +45,54 @@ class TestUpdateLexicon:
         # Other fields unchanged
         assert updated.language == "en"
 
+    def test_update_all_fields(self, editor_with_lexicon):
+        ed = editor_with_lexicon
+        updated = ed.update_lexicon(
+            "test",
+            label="Updated Label",
+            email="updated@test.com",
+            license="https://updated-license.com",
+            url="https://updated-url.com",
+            citation="Updated Citation",
+            logo="https://updated-logo.com",
+            metadata={"key": "value"},
+        )
+        assert updated.label == "Updated Label"
+        assert updated.email == "updated@test.com"
+        assert updated.license == "https://updated-license.com"
+        assert updated.url == "https://updated-url.com"
+        assert updated.citation == "Updated Citation"
+        assert updated.logo == "https://updated-logo.com"
+        assert updated.metadata == {"key": "value"}
+        assert updated.version == "1.0"  # Immutable
+
+    def test_update_clear_fields(self, editor_with_lexicon):
+        ed = editor_with_lexicon
+        # First set some values
+        ed.update_lexicon(
+            "test",
+            url="https://test.com",
+            citation="Test Citation",
+            logo="https://logo.com",
+            metadata={"key": "value"},
+        )
+        # Then clear them
+        updated = ed.update_lexicon(
+            "test",
+            url=None,
+            citation=None,
+            logo=None,
+            metadata=None,
+        )
+        assert updated.url is None
+        assert updated.citation is None
+        assert updated.logo is None
+        assert updated.metadata is None
+
+    def test_update_nonexistent(self, editor):
+        with pytest.raises(EntityNotFoundError):
+            editor.update_lexicon("nonexistent", label="New Label")
+
 
 class TestGetLexicon:
     """TP-LEX-004."""
