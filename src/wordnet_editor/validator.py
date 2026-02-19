@@ -189,6 +189,31 @@ def _lex_filter(lexicon_id: str | None) -> tuple[str, list]:
     )
 
 
+def _check_duplicate_ids(
+    conn: sqlite3.Connection,
+    table: str,
+    etype: str,
+    filt: str,
+    params: list,
+) -> list[ValidationResult]:
+    """Check for duplicate IDs in a given table."""
+    results = []
+    sql = (
+        f"SELECT id, COUNT(*) as cnt FROM {table} WHERE 1=1 {filt} "
+        "GROUP BY id HAVING cnt > 1"
+    )
+    for row in conn.execute(sql, params).fetchall():
+        results.append(ValidationResult(
+            rule_id="VAL-GEN-001",
+            severity="ERROR",
+            entity_type=etype,
+            entity_id=row["id"],
+            message=f"Duplicate {etype} ID: {row['id']}",
+            details={"count": row["cnt"]},
+        ))
+    return results
+
+
 def _val_gen_001(
     conn: sqlite3.Connection, lexicon_id: str | None
 ) -> list[ValidationResult]:
@@ -200,19 +225,7 @@ def _val_gen_001(
         ("entries", "entry"),
         ("senses", "sense"),
     ]:
-        sql = (
-            f"SELECT id, COUNT(*) as cnt FROM {table} WHERE 1=1 {filt} "
-            "GROUP BY id HAVING cnt > 1"
-        )
-        for row in conn.execute(sql, params).fetchall():
-            results.append(ValidationResult(
-                rule_id="VAL-GEN-001",
-                severity="ERROR",
-                entity_type=etype,
-                entity_id=row["id"],
-                message=f"Duplicate {etype} ID: {row['id']}",
-                details={"count": row["cnt"]},
-            ))
+        results.extend(_check_duplicate_ids(conn, table, etype, filt, params))
     return results
 
 
