@@ -10,6 +10,7 @@ import pytest
 from wordnet_editor import (
     DataImportError,
     DuplicateEntityError,
+    EntityNotFoundError,
     WordnetEditor,
 )
 
@@ -400,7 +401,7 @@ class TestFromWn:
             original = wn.config._dbpath
             wn.config._dbpath = db_path
             try:
-                with pytest.raises(Exception):
+                with pytest.raises(EntityNotFoundError):
                     WordnetEditor.from_wn("nonexistent:1.0")
             finally:
                 wn.config._dbpath = original
