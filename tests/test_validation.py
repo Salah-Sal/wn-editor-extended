@@ -231,3 +231,37 @@ class TestRedundantRelation:
         dup_results = [r for r in results if r.rule_id == "VAL-REL-003"]
         # Either the duplicate was inserted and detected, or prevented
         assert True  # validates the rule runs without error
+
+class TestSelfLoop:
+    """VAL-REL-005: self-loop relations."""
+
+    def test_self_loop_detected(self, editor_with_lexicon):
+        ed = editor_with_lexicon
+        ss = ed.create_synset("test", "n", "Self-loop test")
+
+        # Get rowids to force insert self-loop
+        ss_rowid = ed._conn.execute(
+            "SELECT rowid FROM synsets WHERE id = ?", (ss.id,)
+        ).fetchone()[0]
+        lex_rowid = ed._conn.execute(
+            "SELECT rowid FROM lexicons WHERE id = 'test'"
+        ).fetchone()[0]
+
+        # Insert relation type if not present (fixture might not have it)
+        ed._conn.execute(
+            "INSERT OR IGNORE INTO relation_types (type) VALUES ('hypernym')"
+        )
+        type_rowid = ed._conn.execute(
+            "SELECT rowid FROM relation_types WHERE type = 'hypernym'"
+        ).fetchone()[0]
+
+        # Force insert self-loop (bypassing API validation)
+        ed._conn.execute(
+            "INSERT INTO synset_relations "
+            "(lexicon_rowid, source_rowid, target_rowid, type_rowid) "
+            "VALUES (?, ?, ?, ?)",
+            (lex_rowid, ss_rowid, ss_rowid, type_rowid),
+        )
+
+        results = ed.validate()
+        assert any(r.rule_id == "VAL-REL-005" for r in results)
