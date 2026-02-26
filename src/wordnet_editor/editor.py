@@ -1212,7 +1212,9 @@ class WordnetEditor:
 
         # Get all existing IDs that match the base_id-{n} pattern
         # Escape special LIKE characters: \ -> \\, _ -> \_, % -> \%
-        escaped_base = base_id.replace("\\", "\\\\").replace("_", r"\_").replace("%", r"\%")
+        escaped_base = (
+            base_id.replace("\\", "\\\\").replace("_", r"\_").replace("%", r"\%")
+        )
         rows = self._conn.execute(
             "SELECT id FROM entries WHERE id LIKE ? ESCAPE '\\'",
             (f"{escaped_base}-%",),
@@ -2826,7 +2828,35 @@ class WordnetEditor:
         src_rowid = src["rowid"]
         tgt_rowid = tgt["rowid"]
 
-        # RULE-MERGE-006: ILI handling
+        self._merge_ili(src, tgt)
+        self._merge_senses(src_rowid, tgt_rowid)
+        self._merge_relations(src_rowid, tgt_rowid)
+        self._merge_definitions(src_rowid, tgt_rowid)
+        self._merge_examples(src_rowid, tgt_rowid)
+
+        # Remove target from unlexicalized
+        self._conn.execute(
+            "DELETE FROM unlexicalized_synsets WHERE synset_rowid = ?",
+            (tgt_rowid,),
+        )
+
+        # RULE-MERGE-007: Delete source
+        self._conn.execute(
+            "DELETE FROM synsets WHERE rowid = ?", (src_rowid,)
+        )
+
+        _hist.record_update(
+            self._conn, "synset", target_id, "merge_from",
+            None, source_id,
+        )
+
+        return self._build_synset_model(target_id)
+
+    def _merge_ili(self, src: sqlite3.Row, tgt: sqlite3.Row) -> None:
+        """Handle ILI conflict detection (RULE-MERGE-006) and transfer."""
+        src_rowid = src["rowid"]
+        tgt_rowid = tgt["rowid"]
+
         src_has_ili = src["ili_rowid"] is not None
         tgt_has_ili = tgt["ili_rowid"] is not None
         src_has_proposed = self._conn.execute(
@@ -2854,7 +2884,8 @@ class WordnetEditor:
                 (tgt_rowid, src_rowid),
             )
 
-        # RULE-MERGE-001: Sense transfer
+    def _merge_senses(self, src_rowid: int, tgt_rowid: int) -> None:
+        """Move senses from source to target, handling duplicates (RULE-MERGE-001)."""
         senses = self._conn.execute(
             "SELECT rowid, id, entry_rowid FROM senses "
             "WHERE synset_rowid = ?",
@@ -2879,7 +2910,8 @@ class WordnetEditor:
                     (tgt_rowid, s["rowid"]),
                 )
 
-        # RULE-MERGE-002/003: Relation redirect
+    def _merge_relations(self, src_rowid: int, tgt_rowid: int) -> None:
+        """Redirect relations, avoiding self-loops/duplicates (RULE-MERGE-002/003)."""
         # Outgoing relations from source -> update to from target
         out_rels = self._conn.execute(
             "SELECT rowid, target_rowid, type_rowid FROM synset_relations "
@@ -2932,7 +2964,8 @@ class WordnetEditor:
                         (rel["rowid"],),
                     )
 
-        # RULE-MERGE-004: Definition merge
+    def _merge_definitions(self, src_rowid: int, tgt_rowid: int) -> None:
+        """Merge definitions, avoiding duplicates (RULE-MERGE-004)."""
         tgt_defs = {
             r["definition"].strip()
             for r in self._conn.execute(
@@ -2959,30 +2992,13 @@ class WordnetEditor:
                     (d["rowid"],),
                 )
 
-        # RULE-MERGE-005: Example merge
+    def _merge_examples(self, src_rowid: int, tgt_rowid: int) -> None:
+        """Move synset examples (RULE-MERGE-005)."""
         self._conn.execute(
             "UPDATE synset_examples SET synset_rowid = ? "
             "WHERE synset_rowid = ?",
             (tgt_rowid, src_rowid),
         )
-
-        # Remove target from unlexicalized
-        self._conn.execute(
-            "DELETE FROM unlexicalized_synsets WHERE synset_rowid = ?",
-            (tgt_rowid,),
-        )
-
-        # RULE-MERGE-007: Delete source
-        self._conn.execute(
-            "DELETE FROM synsets WHERE rowid = ?", (src_rowid,)
-        )
-
-        _hist.record_update(
-            self._conn, "synset", target_id, "merge_from",
-            None, source_id,
-        )
-
-        return self._build_synset_model(target_id)
 
     # ------------------------------------------------------------------
     # Compound Operations: Split (3.3)
