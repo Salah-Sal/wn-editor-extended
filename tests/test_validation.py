@@ -231,3 +231,63 @@ class TestRedundantRelation:
         dup_results = [r for r in results if r.rule_id == "VAL-REL-003"]
         # Either the duplicate was inserted and detected, or prevented
         assert True  # validates the rule runs without error
+
+    def test_duplicate_sense_relation_detected(self, editor_with_data):
+        """Test detection of redundant sense relations (VAL-REL-003)."""
+        ed, ss1, ss2, e1, e2, s1, s2 = editor_with_data
+
+        # 1. Create a valid sense relation
+        ed.add_sense_relation(s1.id, "antonym", s2.id, auto_inverse=False)
+
+        # 2. Get IDs for manual insertion
+        src_rowid = ed._conn.execute(
+            "SELECT rowid FROM senses WHERE id = ?", (s1.id,)
+        ).fetchone()[0]
+        tgt_rowid = ed._conn.execute(
+            "SELECT rowid FROM senses WHERE id = ?", (s2.id,)
+        ).fetchone()[0]
+        type_rowid = ed._conn.execute(
+            "SELECT rowid FROM relation_types WHERE type = 'antonym'"
+        ).fetchone()[0]
+        lex_rowid = ed._conn.execute(
+            "SELECT rowid FROM lexicons WHERE id = 'test'"
+        ).fetchone()[0]
+
+        # 3. Modify schema: Create temp table without UNIQUE constraint
+        #    to allow inserting a duplicate for testing validation
+        ed._conn.execute("PRAGMA foreign_keys=OFF")
+        # Copy data and schema structure, but constraints (like UNIQUE) are not copied
+        ed._conn.execute(
+            "CREATE TABLE sense_relations_temp AS SELECT * FROM sense_relations"
+        )
+
+        # Drop original table and rename temp
+        ed._conn.execute("DROP TABLE sense_relations")
+        ed._conn.execute(
+            "ALTER TABLE sense_relations_temp RENAME TO sense_relations"
+        )
+
+        # 4. Insert duplicate relation manually
+        ed._conn.execute(
+            "INSERT INTO sense_relations "
+            "(lexicon_rowid, source_rowid, target_rowid, type_rowid) "
+            "VALUES (?, ?, ?, ?)",
+            (lex_rowid, src_rowid, tgt_rowid, type_rowid)
+        )
+
+        ed._conn.execute("PRAGMA foreign_keys=ON")
+
+        # 5. Run validation
+        results = ed.validate()
+
+        # 6. Check for VAL-REL-003 warning
+        warnings = [
+            r for r in results
+            if r.rule_id == "VAL-REL-003"
+            and r.entity_type == "relation"
+            and r.entity_id == s1.id
+        ]
+
+        assert len(warnings) > 0
+        assert "antonym" in warnings[0].message
+        assert warnings[0].details["count"] >= 2
