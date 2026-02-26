@@ -405,6 +405,31 @@ class TestFromWn:
             finally:
                 wn.config._dbpath = original
 
+    def test_import_from_wn_exception_propagation(self):
+        """TP-INIT-009: import_from_wn propagates exceptions from fallback."""
+        from unittest.mock import MagicMock, patch
+        import sqlite3
+        from wordnet_editor.importer import import_from_wn
+
+        conn = MagicMock(spec=sqlite3.Connection)
+        specifier = "test:1.0"
+
+        with patch("wordnet_editor.importer._import_from_wn_bulk") as mock_bulk:
+            with patch("wordnet_editor.importer._import_from_wn_xml") as mock_xml:
+                # Make bulk fail
+                mock_bulk.side_effect = Exception("Bulk import failed")
+                # Make xml fail with a specific error
+                expected_error = ValueError("XML import failed")
+                mock_xml.side_effect = expected_error
+
+                # Assert that the specific error is raised
+                with pytest.raises(ValueError, match="XML import failed"):
+                    import_from_wn(conn, specifier)
+
+                # Verify both were called
+                mock_bulk.assert_called_once()
+                mock_xml.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # TP-INTEG-001 to 004: Commit to wn integration
