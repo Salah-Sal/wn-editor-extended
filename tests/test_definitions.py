@@ -2,8 +2,6 @@
 
 import pytest
 
-from wordnet_editor import EntityNotFoundError
-
 
 class TestAddDefinition:
     """TP-DEF-001."""
