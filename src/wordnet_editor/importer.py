@@ -7,6 +7,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import wn
+import wn.lmf
+
 from wordnet_editor import db as _db
 from wordnet_editor import history as _hist
 from wordnet_editor.exceptions import (
@@ -23,7 +26,6 @@ def import_from_lmf(
     record_history: bool = True,
 ) -> None:
     """Import data from a WN-LMF XML file into the editor database."""
-    import wn.lmf
 
     source = Path(source)
     if not source.exists():
@@ -52,6 +54,14 @@ def import_from_wn(
 
     # Apply overrides
     if overrides:
+        # Note: _apply_overrides was using 'specifier' to find the row,
+        # but if we just imported it, we might need to be careful if specifier changed?
+        # Actually, import_from_wn uses the original specifier to find source data,
+        # but validation or checking inside _import_lexicon uses the ID/Version from the source.
+        # So we should find the lexicon we just imported.
+        # However, _apply_overrides logic seems to assume we look it up by the original specifier?
+        # Wait, if we imported from 'ewn:2020', the inserted lexicon has id='ewn' version='2020' specifier='ewn:2020'.
+        # So that matches.
         _apply_overrides(conn, specifier, overrides)
 
 
@@ -92,14 +102,10 @@ def _import_from_wn_xml(
     import os
     import tempfile
 
-    import wn.lmf
-
-    import wn
-
     lexicons = wn.lexicons()
     target = None
     for lex in lexicons:
-        if lex.specifier() == specifier:
+        if lex.specifier == specifier:
             target = lex
             break
         # Try matching id:version
@@ -139,7 +145,7 @@ def _build_resource_from_wn_db(
         "version": lex_row["version"],
         "url": lex_row["url"] or "",
         "citation": lex_row["citation"] or "",
-        "logo": lex_row.get("logo") or "" if "logo" in lex_row else "",  # type: ignore[attr-defined]
+        "logo": lex_row.get("logo") or "" if "logo" in lex_row.keys() else "",  # type: ignore[attr-defined]
         "meta": _parse_meta(lex_row.get("metadata", None)),  # type: ignore[attr-defined]
         "entries": [],
         "synsets": [],
@@ -174,7 +180,7 @@ def _build_resource_from_wn_db(
 
         # Lexfile
         lexfile = ""
-        if sr.get("lexfile_rowid") if "lexfile_rowid" in sr else None:
+        if sr.get("lexfile_rowid") if "lexfile_rowid" in sr.keys() else None:
             lf_row = wn_conn.execute(
                 "SELECT name FROM lexfiles WHERE rowid = ?",
                 (sr["lexfile_rowid"],),
@@ -254,7 +260,7 @@ def _build_resource_from_wn_db(
             "ili": ili_str if not proposed else "in",
             "lexicalized": unlex is None,
             "lexfile": lexfile,
-            "meta": _parse_meta(sr.get("metadata") if "metadata" in sr else None),
+            "meta": _parse_meta(sr.get("metadata") if "metadata" in sr.keys() else None),
             "definitions": defs,
             "relations": relations,
             "examples": examples,
@@ -412,7 +418,7 @@ def _build_resource_from_wn_db(
                 "n": sr.get("entry_rank") or 0,
                 "lexicalized": unlex_sense is None,
                 "adjposition": adj_row["adjposition"] if adj_row else "",
-                "meta": _parse_meta(sr.get("metadata") if "metadata" in sr else None),
+                "meta": _parse_meta(sr.get("metadata") if "metadata" in sr.keys() else None),
                 "relations": sense_rels,
                 "examples": sense_examples,
                 "counts": counts_list,
@@ -431,7 +437,7 @@ def _build_resource_from_wn_db(
             "lemma": lemma_dict,
             "forms": forms_list,
             "senses": senses_list,
-            "meta": _parse_meta(er.get("metadata") if "metadata" in er else None),
+            "meta": _parse_meta(er.get("metadata") if "metadata" in er.keys() else None),
         }
         if idx_row:
             entry["index"] = idx_row["lemma"]
