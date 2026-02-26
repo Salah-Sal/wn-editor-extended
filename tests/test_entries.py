@@ -3,7 +3,6 @@
 import pytest
 
 from wordnet_editor import (
-    DuplicateEntityError,
     EntityNotFoundError,
     RelationError,
     ValidationError,
