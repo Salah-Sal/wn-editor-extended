@@ -285,3 +285,13 @@ class TestPOSMismatch:
 
         results = ed.validate()
         assert any(r.rule_id == "VAL-TAX-001" for r in results)
+
+
+class TestLowConfidenceSense:
+    """VAL-EDT-003: Sense with low confidence."""
+
+    def test_low_confidence_sense_detected(self, editor_with_data):
+        ed, ss1, ss2, e1, e2, s1, s2 = editor_with_data
+        ed.set_confidence("sense", s1.id, 0.4)
+        results = ed.validate()
+        assert any(r.rule_id == "VAL-EDT-003" for r in results)
