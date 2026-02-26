@@ -267,3 +267,21 @@ class TestRedundantSenses:
         results = ed.validate()
         # Assert that the validator catches the redundant sense
         assert any(r.rule_id == "VAL-ENT-002" for r in results)
+
+
+class TestPOSMismatch:
+    """VAL-TAX-001: POS mismatch with hypernym."""
+
+    def test_pos_mismatch_detected(self, editor_with_lexicon):
+        ed = editor_with_lexicon
+        lex_id = ed.list_lexicons()[0].id
+        # Create a noun synset
+        noun_ss = ed.create_synset(lex_id, "n", "A noun definition")
+        # Create a verb synset
+        verb_ss = ed.create_synset(lex_id, "v", "A verb definition")
+
+        # Link them with hypernym relation (noun -> verb)
+        ed.add_synset_relation(noun_ss.id, "hypernym", verb_ss.id)
+
+        results = ed.validate()
+        assert any(r.rule_id == "VAL-TAX-001" for r in results)
