@@ -533,10 +533,28 @@ class WordnetEditor:
                 (synset_rowid,),
             ).fetchall()
             for sr in sense_rows:
-                self._remove_sense_internal(sr["id"])
+                _hist.record_delete(self._conn, "sense", sr["id"])
 
-        # Remove synset relations (both directions) and their inverses
-        self._cleanup_synset_relations(synset_rowid)
+        # Note: We rely on ON DELETE CASCADE in the database to remove
+        # senses, relations (both sense and synset), definitions, etc.
+        # This is much faster than deleting them one by one.
+
+        # However, we still need to handle relation inverses for synset relations
+        # where the target is this synset (or source is this synset).
+        # _cleanup_synset_relations handles both directions and inverses.
+        # If we just delete the synset, CASCADE removes relations where
+        # source or target is this synset.
+        # BUT, if we have a relation A -> B, and we delete A.
+        # synset_relations table has FK on source_rowid and target_rowid with CASCADE.
+        # So A->B is deleted.
+        # If auto-inverse exists, B->A is also deleted because target_rowid (A) is deleted.
+        # So we don't need to manually cleanup relations.
+
+        # One edge case: unlexicalized_synsets logic in _remove_sense_internal.
+        # If we delete a sense, we check if its synset becomes empty.
+        # Here we are deleting the synset itself, so we don't care if it becomes empty.
+        # But wait, what if we delete a sense that was the LAST sense of the synset?
+        # The synset is being deleted anyway.
 
         _hist.record_delete(
             self._conn, "synset", synset_id, {"pos": row["pos"]}
