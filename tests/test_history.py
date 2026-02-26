@@ -2,8 +2,6 @@
 
 import time
 
-import pytest
-
 
 class TestHistoryCreate:
     """TP-HIST-001."""
