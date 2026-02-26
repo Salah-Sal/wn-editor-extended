@@ -7,6 +7,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import wn
+import wn.lmf
 from wordnet_editor import db as _db
 from wordnet_editor import history as _hist
 from wordnet_editor.exceptions import (
@@ -23,8 +25,6 @@ def import_from_lmf(
     record_history: bool = True,
 ) -> None:
     """Import data from a WN-LMF XML file into the editor database."""
-    import wn.lmf
-
     source = Path(source)
     if not source.exists():
         raise FileNotFoundError(f"File not found: {source}")
@@ -91,10 +91,6 @@ def _import_from_wn_xml(
     """Fallback: export from wn to temp XML, then import."""
     import os
     import tempfile
-
-    import wn.lmf
-
-    import wn
 
     lexicons = wn.lexicons()
     target = None
