@@ -3,9 +3,7 @@
 import os
 import tempfile
 
-import pytest
-
-from wordnet_editor import WordnetEditor, DatabaseError
+from wordnet_editor import WordnetEditor
 
 
 class TestInit:
