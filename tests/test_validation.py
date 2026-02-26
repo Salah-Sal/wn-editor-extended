@@ -57,7 +57,7 @@ class TestIDPrefixValidation:
         ed = editor_with_lexicon
         # Manually insert a synset with wrong prefix (bypass API)
         lex_rowid = ed._conn.execute(
-            "SELECT rowid FROM lexicons WHERE id = 'test'"
+            "SELECT rowid FROM lexicons LIMIT 1"
         ).fetchone()[0]
         ed._conn.execute(
             "INSERT INTO synsets (id, lexicon_rowid, pos) "
@@ -172,7 +172,7 @@ class TestInvalidRelationType:
             "SELECT rowid FROM synsets WHERE id = ?", (ss2.id,)
         ).fetchone()[0]
         lex_rowid = ed._conn.execute(
-            "SELECT rowid FROM lexicons WHERE id = 'test'"
+            "SELECT rowid FROM lexicons LIMIT 1"
         ).fetchone()[0]
         # "derivation" is a sense relation, not a synset relation
         ed._conn.execute(
@@ -205,7 +205,7 @@ class TestRedundantRelation:
             "SELECT rowid FROM synsets WHERE id = ?", (ss2.id,)
         ).fetchone()[0]
         lex_rowid = ed._conn.execute(
-            "SELECT rowid FROM lexicons WHERE id = 'test'"
+            "SELECT rowid FROM lexicons LIMIT 1"
         ).fetchone()[0]
         type_rowid = ed._conn.execute(
             "SELECT rowid FROM relation_types WHERE type = 'hypernym'"
@@ -231,3 +231,39 @@ class TestRedundantRelation:
         dup_results = [r for r in results if r.rule_id == "VAL-REL-003"]
         # Either the duplicate was inserted and detected, or prevented
         assert True  # validates the rule runs without error
+
+
+class TestRedundantSenses:
+    """VAL-ENT-002: redundant senses."""
+
+    def test_redundant_senses_detected(self, editor_with_lexicon):
+        ed = editor_with_lexicon
+        ss = ed.create_synset("test", "n", "Test definition")
+        entry = ed.create_entry("test", "lemma", "n")
+
+        # Add first sense normally
+        ed.add_sense(entry.id, ss.id, id="test-s1")
+
+        # Add second sense manually to bypass Python-side duplicate check
+        # Fetch necessary rowids
+        entry_rowid = ed._conn.execute(
+            "SELECT rowid FROM entries WHERE id = ?", (entry.id,)
+        ).fetchone()[0]
+        synset_rowid = ed._conn.execute(
+            "SELECT rowid FROM synsets WHERE id = ?", (ss.id,)
+        ).fetchone()[0]
+        lex_rowid = ed._conn.execute(
+            "SELECT rowid FROM lexicons LIMIT 1"
+        ).fetchone()[0]
+
+        # Insert duplicate sense directly
+        ed._conn.execute(
+            "INSERT INTO senses "
+            "(id, lexicon_rowid, entry_rowid, synset_rowid) "
+            "VALUES (?, ?, ?, ?)",
+            ("test-s2", lex_rowid, entry_rowid, synset_rowid),
+        )
+
+        results = ed.validate()
+        # Assert that the validator catches the redundant sense
+        assert any(r.rule_id == "VAL-ENT-002" for r in results)
