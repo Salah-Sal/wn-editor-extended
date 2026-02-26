@@ -231,3 +231,38 @@ class TestRedundantRelation:
         dup_results = [r for r in results if r.rule_id == "VAL-REL-003"]
         # Either the duplicate was inserted and detected, or prevented
         assert True  # validates the rule runs without error
+
+
+class TestRedundantSenses:
+    """VAL-ENT-002: redundant senses."""
+
+    def test_duplicate_senses_detected(self, editor_with_lexicon):
+        ed = editor_with_lexicon
+        ss = ed.create_synset("test", "n", "Test definition")
+        entry = ed.create_entry("test", "test-lemma", "n")
+
+        # Add first valid sense
+        ed.add_sense(entry.id, ss.id)
+
+        # Get internal IDs for manual insertion
+        entry_rowid = ed._conn.execute(
+            "SELECT rowid FROM entries WHERE id = ?", (entry.id,)
+        ).fetchone()[0]
+        synset_rowid = ed._conn.execute(
+            "SELECT rowid FROM synsets WHERE id = ?", (ss.id,)
+        ).fetchone()[0]
+        lex_rowid = ed._conn.execute(
+            "SELECT rowid FROM lexicons WHERE id = 'test'"
+        ).fetchone()[0]
+
+        # Insert duplicate sense directly (bypass unique check in API)
+        # Note: 'id' must still be unique in the table, but entry_rowid/synset_rowid will be dupes
+        ed._conn.execute(
+            "INSERT INTO senses "
+            "(id, lexicon_rowid, entry_rowid, entry_rank, synset_rowid, synset_rank) "
+            "VALUES ('test-sense-dup', ?, ?, 2, ?, 2)",
+            (lex_rowid, entry_rowid, synset_rowid),
+        )
+
+        results = ed.validate()
+        assert any(r.rule_id == "VAL-ENT-002" for r in results)
