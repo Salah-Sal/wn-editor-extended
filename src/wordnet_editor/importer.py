@@ -499,285 +499,315 @@ def _import_resource(
             _import_lexicon(conn, lex_data, record_history=record_history)
 
 
-def _import_lexicon(
-    conn: sqlite3.Connection,
-    lex: dict,
-    *,
-    record_history: bool = True,
-) -> None:
-    """Import one lexicon from a LexicalResource dict."""
-    lex_id = lex["id"]
-    version = lex["version"]
-    specifier = f"{lex_id}:{version}"
+class _LexiconImporter:
+    """Helper class to import a lexicon."""
 
-    # Check for duplicates
-    existing = conn.execute(
-        "SELECT 1 FROM lexicons WHERE id = ? AND version = ?",
-        (lex_id, version),
-    ).fetchone()
-    if existing:
-        raise DuplicateEntityError(
-            f"Lexicon {lex_id}:{version} already exists"
-        )
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        lex: dict,
+        *,
+        record_history: bool = True,
+    ) -> None:
+        self.conn = conn
+        self.lex = lex
+        self.record_history = record_history
+        self.lex_rowid: int = -1
+        self.synset_id_to_rowid: dict[str, int] = {}
+        self.sense_id_to_rowid: dict[str, int] = {}
+        self.rel_type_map: dict[str, int] = {}
+        self.lexfile_map: dict[str, int] = {}
 
-    meta = lex.get("meta")
-    meta_json = json.dumps(meta) if meta else None
+    def _create_lexicon_record(self) -> None:
+        lex_id = self.lex["id"]
+        version = self.lex["version"]
+        specifier = f"{lex_id}:{version}"
 
-    conn.execute(
-        "INSERT INTO lexicons "
-        "(specifier, id, label, language, email, license, version, "
-        "url, citation, logo, metadata, modified) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-        (specifier, lex_id, lex["label"], lex["language"],
-         lex["email"], lex["license"], version,
-         lex.get("url") or None, lex.get("citation") or None,
-         lex.get("logo") or None, meta_json),
-    )
-    lex_rowid = conn.execute(
-        "SELECT rowid FROM lexicons WHERE specifier = ?", (specifier,)
-    ).fetchone()[0]
-
-    if record_history:
-        _hist.record_create(conn, "lexicon", lex_id)
-
-    # Dependencies
-    for dep in lex.get("requires", []):
-        provider_rowid = None
-        pr = conn.execute(
-            "SELECT rowid FROM lexicons WHERE id = ? AND version = ?",
-            (dep["id"], dep["version"]),
+        # Check for duplicates
+        existing = self.conn.execute(
+            "SELECT 1 FROM lexicons WHERE id = ? AND version = ?",
+            (lex_id, version),
         ).fetchone()
-        if pr:
-            provider_rowid = pr[0]
-        conn.execute(
-            "INSERT INTO lexicon_dependencies "
-            "(dependent_rowid, provider_id, provider_version, provider_url, provider_rowid) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (lex_rowid, dep["id"], dep["version"],
-             dep.get("url") or None, provider_rowid),
-        )
-
-    # Extensions
-    for ext in lex.get("extends", []):
-        base_rowid = None
-        br = conn.execute(
-            "SELECT rowid FROM lexicons WHERE id = ? AND version = ?",
-            (ext.get("id", ""), ext.get("version", "")),
-        ).fetchone()
-        if br:
-            base_rowid = br[0]
-        conn.execute(
-            "INSERT INTO lexicon_extensions "
-            "(extension_rowid, base_id, base_version, base_url, base_rowid) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (lex_rowid, ext.get("id", ""), ext.get("version", ""),
-             ext.get("url") or None, base_rowid),
-        )
-
-    # Collect relation types and lexfiles
-    rel_types: set[str] = set()
-    lexfile_names: set[str] = set()
-
-    for syn in lex.get("synsets", []):
-        for r in syn.get("relations", []):
-            rel_types.add(r["relType"])
-        lf = syn.get("lexfile", "")
-        if lf:
-            lexfile_names.add(lf)
-
-    for entry in lex.get("entries", []):
-        for sense in entry.get("senses", []):
-            for r in sense.get("relations", []):
-                rel_types.add(r["relType"])
-
-    for rt in rel_types:
-        _db.get_or_create_relation_type(conn, rt)
-    for lf in lexfile_names:
-        _db.get_or_create_lexfile(conn, lf)
-
-    # Build relation type cache
-    rel_type_map = {
-        row_type: row_id
-        for row_type, row_id in conn.execute("SELECT type, rowid FROM relation_types")
-    }
-
-    def _get_rel_type_rowid(rel_type: str) -> int:
-        rowid = rel_type_map.get(rel_type)
-        if rowid is None:
-            rowid = _db.get_or_create_relation_type(conn, rel_type)
-            rel_type_map[rel_type] = rowid
-        return rowid
-
-    # Build synset ID -> rowid mapping
-    synset_id_to_rowid: dict[str, int] = {}
-
-    # Pre-fetch lexfiles
-    lexfile_map: dict[str, int] = {
-        row["name"]: row["rowid"]
-        for row in conn.execute("SELECT name, rowid FROM lexfiles").fetchall()
-    }
-
-    # Prepare bulk synset insert
-    synset_params = []
-    proposed_ili_params = []
-    unlex_params = []
-
-    # Store dependent data keyed by synset ID to resolve rowid later
-    proposed_ili_data: dict[str, tuple] = {}
-    unlex_data: set[str] = set()
-
-    # Cache ILI status
-    ili_status_rowid = conn.execute(
-        "SELECT rowid FROM ili_statuses WHERE status = 'presupposed'"
-    ).fetchone()[0]
-
-    for syn in lex.get("synsets", []):
-        syn_id = syn["id"]
-        ili_str = syn.get("ili", "")
-
-        ili_rowid = None
-        if ili_str and ili_str != "in":
-            # Inline get_or_create_ili with cached status
-            conn.execute(
-                "INSERT OR IGNORE INTO ilis (id, status_rowid) VALUES (?, ?)",
-                (ili_str, ili_status_rowid),
-            )
-            ili_rowid = conn.execute(
-                "SELECT rowid FROM ilis WHERE id = ?",
-                (ili_str,),
-            ).fetchone()[0]
-
-        lexfile_rowid = None
-        lf = syn.get("lexfile", "")
-        if lf:
-            lexfile_rowid = lexfile_map.get(lf)
-
-        syn_meta = syn.get("meta")
-        synset_params.append((
-            syn_id,
-            lex_rowid,
-            ili_rowid,
-            syn.get("partOfSpeech") or None,
-            lexfile_rowid,
-            json.dumps(syn_meta) if syn_meta else None
-        ))
-
-        # Proposed ILI
-        if ili_str == "in":
-            ili_def = syn.get("ili_definition", {})
-            if isinstance(ili_def, dict):
-                def_text = ili_def.get("text", "")
-                def_meta = ili_def.get("meta")
-            else:
-                def_text = str(ili_def)
-                def_meta = None
-            proposed_ili_data[syn_id] = (
-                def_text,
-                json.dumps(def_meta) if def_meta else None
+        if existing:
+            raise DuplicateEntityError(
+                f"Lexicon {lex_id}:{version} already exists"
             )
 
-        # Unlexicalized
-        if not syn.get("lexicalized", True):
-            unlex_data.add(syn_id)
+        meta = self.lex.get("meta")
+        meta_json = json.dumps(meta) if meta else None
 
-    # Bulk insert synsets
-    if synset_params:
-        conn.executemany(
-            "INSERT INTO synsets (id, lexicon_rowid, ili_rowid, pos, lexfile_rowid, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            synset_params,
+        self.conn.execute(
+            "INSERT INTO lexicons "
+            "(specifier, id, label, language, email, license, version, "
+            "url, citation, logo, metadata, modified) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            (specifier, lex_id, self.lex["label"], self.lex["language"],
+             self.lex["email"], self.lex["license"], version,
+             self.lex.get("url") or None, self.lex.get("citation") or None,
+             self.lex.get("logo") or None, meta_json),
         )
-
-        # Recover rowids
-        cur = conn.cursor()
-        cur.row_factory = None
-        synset_id_to_rowid = dict(
-            cur.execute(
-                "SELECT id, rowid FROM synsets WHERE lexicon_rowid = ?",
-                (lex_rowid,),
-            ).fetchall()
-        )
-
-        # Prepare dependent inserts
-        for syn_id, (def_text, def_meta_json) in proposed_ili_data.items():
-            s_rowid = synset_id_to_rowid.get(syn_id)
-            if s_rowid:
-                proposed_ili_params.append((s_rowid, def_text, def_meta_json))
-
-        for syn_id in unlex_data:
-            s_rowid = synset_id_to_rowid.get(syn_id)
-            if s_rowid:
-                unlex_params.append((s_rowid,))
-
-        if proposed_ili_params:
-            conn.executemany(
-                "INSERT INTO proposed_ilis (synset_rowid, definition, metadata) "
-                "VALUES (?, ?, ?)",
-                proposed_ili_params,
-            )
-
-        if unlex_params:
-            conn.executemany(
-                "INSERT INTO unlexicalized_synsets (synset_rowid) VALUES (?)",
-                unlex_params,
-            )
-
-        if record_history:
-            # History recording (still sequential as API doesn't support bulk)
-            for syn_id, _, _, _, _, _ in synset_params:
-                _hist.record_create(conn, "synset", syn_id)
-
-    # Insert entries and their children
-    sense_id_to_rowid: dict[str, int] = {}
-
-    for entry in lex.get("entries", []):
-        entry_meta = entry.get("meta")
-        lemma = entry.get("lemma", {})
-        pos = lemma.get("partOfSpeech", "")
-
-        conn.execute(
-            "INSERT INTO entries (id, lexicon_rowid, pos, metadata) "
-            "VALUES (?, ?, ?, ?)",
-            (entry["id"], lex_rowid, pos,
-             json.dumps(entry_meta) if entry_meta else None),
-        )
-        entry_rowid = conn.execute(
-            "SELECT rowid FROM entries WHERE id = ? AND lexicon_rowid = ?",
-            (entry["id"], lex_rowid),
+        self.lex_rowid = self.conn.execute(
+            "SELECT rowid FROM lexicons WHERE specifier = ?", (specifier,)
         ).fetchone()[0]
 
-        # Entry index
-        if entry.get("index"):
-            conn.execute(
-                "INSERT INTO entry_index (entry_rowid, lemma) VALUES (?, ?)",
-                (entry_rowid, entry["index"]),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO entry_index (entry_rowid, lemma) VALUES (?, ?)",
-                (entry_rowid, lemma.get("writtenForm", "")),
+        if self.record_history:
+            _hist.record_create(self.conn, "lexicon", lex_id)
+
+    def _import_dependencies(self) -> None:
+        for dep in self.lex.get("requires", []):
+            provider_rowid = None
+            pr = self.conn.execute(
+                "SELECT rowid FROM lexicons WHERE id = ? AND version = ?",
+                (dep["id"], dep["version"]),
+            ).fetchone()
+            if pr:
+                provider_rowid = pr[0]
+            self.conn.execute(
+                "INSERT INTO lexicon_dependencies "
+                "(dependent_rowid, provider_id, provider_version, provider_url, provider_rowid) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (self.lex_rowid, dep["id"], dep["version"],
+                 dep.get("url") or None, provider_rowid),
             )
 
-        # Lemma form (rank=0)
-        lemma_form = lemma.get("writtenForm", "")
-        lemma_script = lemma.get("script") or None
-        if lemma_script == "":
-            lemma_script = None
-        normalized = lemma_form.casefold() if lemma_form.casefold() != lemma_form else None
-        conn.execute(
+    def _import_extensions(self) -> None:
+        for ext in self.lex.get("extends", []):
+            base_rowid = None
+            br = self.conn.execute(
+                "SELECT rowid FROM lexicons WHERE id = ? AND version = ?",
+                (ext.get("id", ""), ext.get("version", "")),
+            ).fetchone()
+            if br:
+                base_rowid = br[0]
+            self.conn.execute(
+                "INSERT INTO lexicon_extensions "
+                "(extension_rowid, base_id, base_version, base_url, base_rowid) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (self.lex_rowid, ext.get("id", ""), ext.get("version", ""),
+                 ext.get("url") or None, base_rowid),
+            )
+
+    def _ensure_relation_types_and_lexfiles(self) -> None:
+        rel_types: set[str] = set()
+        lexfile_names: set[str] = set()
+
+        for syn in self.lex.get("synsets", []):
+            for r in syn.get("relations", []):
+                rel_types.add(r["relType"])
+            lf = syn.get("lexfile", "")
+            if lf:
+                lexfile_names.add(lf)
+
+        for entry in self.lex.get("entries", []):
+            for sense in entry.get("senses", []):
+                for r in sense.get("relations", []):
+                    rel_types.add(r["relType"])
+
+        for rt in rel_types:
+            _db.get_or_create_relation_type(self.conn, rt)
+        for lf in lexfile_names:
+            _db.get_or_create_lexfile(self.conn, lf)
+
+        # Build relation type cache
+        self.rel_type_map = {
+            row_type: row_id
+            for row_type, row_id in self.conn.execute("SELECT type, rowid FROM relation_types")
+        }
+
+        # Pre-fetch lexfiles
+        self.lexfile_map = {
+            row["name"]: row["rowid"]
+            for row in self.conn.execute("SELECT name, rowid FROM lexfiles").fetchall()
+        }
+
+    def _get_rel_type_rowid(self, rel_type: str) -> int:
+        rowid = self.rel_type_map.get(rel_type)
+        if rowid is None:
+            rowid = _db.get_or_create_relation_type(self.conn, rel_type)
+            self.rel_type_map[rel_type] = rowid
+        return rowid
+
+    def _import_synsets(self) -> None:
+        # Prepare bulk synset insert
+        synset_params = []
+        proposed_ili_params = []
+        unlex_params = []
+
+        # Store dependent data keyed by synset ID to resolve rowid later
+        proposed_ili_data: dict[str, tuple] = {}
+        unlex_data: set[str] = set()
+
+        # Cache ILI status
+        ili_status_rowid = self.conn.execute(
+            "SELECT rowid FROM ili_statuses WHERE status = 'presupposed'"
+        ).fetchone()[0]
+
+        for syn in self.lex.get("synsets", []):
+            syn_id = syn["id"]
+            ili_str = syn.get("ili", "")
+
+            ili_rowid = None
+            if ili_str and ili_str != "in":
+                # Inline get_or_create_ili with cached status
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO ilis (id, status_rowid) VALUES (?, ?)",
+                    (ili_str, ili_status_rowid),
+                )
+                ili_rowid = self.conn.execute(
+                    "SELECT rowid FROM ilis WHERE id = ?",
+                    (ili_str,),
+                ).fetchone()[0]
+
+            lexfile_rowid = None
+            lf = syn.get("lexfile", "")
+            if lf:
+                lexfile_rowid = self.lexfile_map.get(lf)
+
+            syn_meta = syn.get("meta")
+            synset_params.append((
+                syn_id,
+                self.lex_rowid,
+                ili_rowid,
+                syn.get("partOfSpeech") or None,
+                lexfile_rowid,
+                json.dumps(syn_meta) if syn_meta else None
+            ))
+
+            # Proposed ILI
+            if ili_str == "in":
+                ili_def = syn.get("ili_definition", {})
+                if isinstance(ili_def, dict):
+                    def_text = ili_def.get("text", "")
+                    def_meta = ili_def.get("meta")
+                else:
+                    def_text = str(ili_def)
+                    def_meta = None
+                proposed_ili_data[syn_id] = (
+                    def_text,
+                    json.dumps(def_meta) if def_meta else None
+                )
+
+            # Unlexicalized
+            if not syn.get("lexicalized", True):
+                unlex_data.add(syn_id)
+
+        # Bulk insert synsets
+        if synset_params:
+            self.conn.executemany(
+                "INSERT INTO synsets (id, lexicon_rowid, ili_rowid, pos, lexfile_rowid, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                synset_params,
+            )
+
+            # Recover rowids
+            cur = self.conn.cursor()
+            cur.row_factory = None
+            self.synset_id_to_rowid = dict(
+                cur.execute(
+                    "SELECT id, rowid FROM synsets WHERE lexicon_rowid = ?",
+                    (self.lex_rowid,),
+                ).fetchall()
+            )
+
+            # Prepare dependent inserts
+            for syn_id, (def_text, def_meta_json) in proposed_ili_data.items():
+                s_rowid = self.synset_id_to_rowid.get(syn_id)
+                if s_rowid:
+                    proposed_ili_params.append((s_rowid, def_text, def_meta_json))
+
+            for syn_id in unlex_data:
+                s_rowid = self.synset_id_to_rowid.get(syn_id)
+                if s_rowid:
+                    unlex_params.append((s_rowid,))
+
+            if proposed_ili_params:
+                self.conn.executemany(
+                    "INSERT INTO proposed_ilis (synset_rowid, definition, metadata) "
+                    "VALUES (?, ?, ?)",
+                    proposed_ili_params,
+                )
+
+            if unlex_params:
+                self.conn.executemany(
+                    "INSERT INTO unlexicalized_synsets (synset_rowid) VALUES (?)",
+                    unlex_params,
+                )
+
+            if self.record_history:
+                # History recording (still sequential as API doesn't support bulk)
+                for syn_id, _, _, _, _, _ in synset_params:
+                    _hist.record_create(self.conn, "synset", syn_id)
+
+    def _import_entries(self) -> None:
+        for entry in self.lex.get("entries", []):
+            entry_meta = entry.get("meta")
+            lemma = entry.get("lemma", {})
+            pos = lemma.get("partOfSpeech", "")
+
+            self.conn.execute(
+                "INSERT INTO entries (id, lexicon_rowid, pos, metadata) "
+                "VALUES (?, ?, ?, ?)",
+                (entry["id"], self.lex_rowid, pos,
+                 json.dumps(entry_meta) if entry_meta else None),
+            )
+            entry_rowid = self.conn.execute(
+                "SELECT rowid FROM entries WHERE id = ? AND lexicon_rowid = ?",
+                (entry["id"], self.lex_rowid),
+            ).fetchone()[0]
+
+            # Entry index
+            if entry.get("index"):
+                self.conn.execute(
+                    "INSERT INTO entry_index (entry_rowid, lemma) VALUES (?, ?)",
+                    (entry_rowid, entry["index"]),
+                )
+            else:
+                self.conn.execute(
+                    "INSERT INTO entry_index (entry_rowid, lemma) VALUES (?, ?)",
+                    (entry_rowid, lemma.get("writtenForm", "")),
+                )
+
+            # Lemma form (rank=0)
+            self._import_forms(entry_rowid, lemma, is_lemma=True)
+
+            # Additional forms
+            for rank, form in enumerate(entry.get("forms", []), start=1):
+                self._import_forms(entry_rowid, form, rank=rank)
+
+            # Senses
+            self._import_senses(entry, entry_rowid)
+
+            if self.record_history:
+                _hist.record_create(self.conn, "entry", entry["id"])
+
+    def _import_forms(self, entry_rowid: int, form_data: dict, is_lemma: bool = False, rank: int = 0) -> None:
+        form_text = form_data.get("writtenForm", "")
+        form_script = form_data.get("script") or None
+        if form_script == "":
+            form_script = None
+
+        form_id = None
+        if not is_lemma:
+            form_id = form_data.get("id") or None
+            if form_id == "":
+                form_id = None
+
+        norm = form_text.casefold() if form_text.casefold() != form_text else None
+
+        self.conn.execute(
             "INSERT INTO forms (id, lexicon_rowid, entry_rowid, form, "
-            "normalized_form, script, rank) VALUES (NULL, ?, ?, ?, ?, ?, 0)",
-            (lex_rowid, entry_rowid, lemma_form, normalized, lemma_script),
+            "normalized_form, script, rank) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (form_id, self.lex_rowid, entry_rowid, form_text, norm,
+             form_script, rank),
         )
-        lemma_form_rowid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        form_rowid = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-        # Lemma pronunciations
-        for pron in lemma.get("pronunciations", []):
-            conn.execute(
+        for pron in form_data.get("pronunciations", []):
+            self.conn.execute(
                 "INSERT INTO pronunciations "
                 "(form_rowid, lexicon_rowid, value, variety, notation, phonemic, audio) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (lemma_form_rowid, lex_rowid,
+                (form_rowid, self.lex_rowid,
                  pron.get("value") or None,
                  pron.get("variety") or None,
                  pron.get("notation") or None,
@@ -785,62 +815,22 @@ def _import_lexicon(
                  pron.get("audio") or None),
             )
 
-        # Lemma tags
-        for tag in lemma.get("tags", []):
-            conn.execute(
+        for tag in form_data.get("tags", []):
+            self.conn.execute(
                 "INSERT INTO tags (form_rowid, lexicon_rowid, tag, category) "
                 "VALUES (?, ?, ?, ?)",
-                (lemma_form_rowid, lex_rowid,
+                (form_rowid, self.lex_rowid,
                  tag.get("tag"), tag.get("category")),
             )
 
-        # Additional forms
-        for rank, form in enumerate(entry.get("forms", []), start=1):
-            form_text = form.get("writtenForm", "")
-            form_script = form.get("script") or None
-            if form_script == "":
-                form_script = None
-            form_id = form.get("id") or None
-            if form_id == "":
-                form_id = None
-            norm = form_text.casefold() if form_text.casefold() != form_text else None
-            conn.execute(
-                "INSERT INTO forms (id, lexicon_rowid, entry_rowid, form, "
-                "normalized_form, script, rank) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (form_id, lex_rowid, entry_rowid, form_text, norm,
-                 form_script, rank),
-            )
-            form_rowid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-            for pron in form.get("pronunciations", []):
-                conn.execute(
-                    "INSERT INTO pronunciations "
-                    "(form_rowid, lexicon_rowid, value, variety, notation, phonemic, audio) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (form_rowid, lex_rowid,
-                     pron.get("value") or None,
-                     pron.get("variety") or None,
-                     pron.get("notation") or None,
-                     1 if pron.get("phonemic", True) else 0,
-                     pron.get("audio") or None),
-                )
-
-            for tag in form.get("tags", []):
-                conn.execute(
-                    "INSERT INTO tags (form_rowid, lexicon_rowid, tag, category) "
-                    "VALUES (?, ?, ?, ?)",
-                    (form_rowid, lex_rowid,
-                     tag.get("tag"), tag.get("category")),
-                )
-
-        # Senses
+    def _import_senses(self, entry: dict, entry_rowid: int) -> None:
         for rank, sense in enumerate(entry.get("senses", []), start=1):
             synset_id = sense.get("synset", "")
             # Resolve synset_rowid
-            syn_rowid = synset_id_to_rowid.get(synset_id)
+            syn_rowid = self.synset_id_to_rowid.get(synset_id)
             if syn_rowid is None:
                 # Try cross-lexicon lookup
-                sr = conn.execute(
+                sr = self.conn.execute(
                     "SELECT rowid FROM synsets WHERE id = ?", (synset_id,)
                 ).fetchone()
                 if sr:
@@ -854,20 +844,20 @@ def _import_lexicon(
 
             # Check members for synset_rank
             sense_meta = sense.get("meta")
-            conn.execute(
+            self.conn.execute(
                 "INSERT INTO senses (id, lexicon_rowid, entry_rowid, "
                 "entry_rank, synset_rowid, synset_rank, metadata) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (sense["id"], lex_rowid, entry_rowid,
+                (sense["id"], self.lex_rowid, entry_rowid,
                  entry_rank, syn_rowid, synset_rank_val,
                  json.dumps(sense_meta) if sense_meta else None),
             )
-            sense_rowid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            sense_id_to_rowid[sense["id"]] = sense_rowid
+            sense_rowid = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            self.sense_id_to_rowid[sense["id"]] = sense_rowid
 
             # Unlexicalized sense
             if not sense.get("lexicalized", True):
-                conn.execute(
+                self.conn.execute(
                     "INSERT INTO unlexicalized_senses (sense_rowid) VALUES (?)",
                     (sense_rowid,),
                 )
@@ -875,7 +865,7 @@ def _import_lexicon(
             # Adjposition
             adj = sense.get("adjposition", "")
             if adj:
-                conn.execute(
+                self.conn.execute(
                     "INSERT INTO adjpositions (sense_rowid, adjposition) "
                     "VALUES (?, ?)",
                     (sense_rowid, adj),
@@ -884,174 +874,195 @@ def _import_lexicon(
             # Counts
             for c in sense.get("counts", []):
                 c_meta = c.get("meta")
-                conn.execute(
+                self.conn.execute(
                     "INSERT INTO counts (lexicon_rowid, sense_rowid, count, metadata) "
                     "VALUES (?, ?, ?, ?)",
-                    (lex_rowid, sense_rowid, c.get("value", 0),
+                    (self.lex_rowid, sense_rowid, c.get("value", 0),
                      json.dumps(c_meta) if c_meta else None),
                 )
 
             # Sense examples
             for ex in sense.get("examples", []):
                 ex_meta = ex.get("meta")
-                conn.execute(
+                self.conn.execute(
                     "INSERT INTO sense_examples "
                     "(lexicon_rowid, sense_rowid, example, language, metadata) "
                     "VALUES (?, ?, ?, ?, ?)",
-                    (lex_rowid, sense_rowid, ex.get("text", ""),
+                    (self.lex_rowid, sense_rowid, ex.get("text", ""),
                      ex.get("language") or None,
                      json.dumps(ex_meta) if ex_meta else None),
                 )
 
-            if record_history:
-                _hist.record_create(conn, "sense", sense["id"])
+            if self.record_history:
+                _hist.record_create(self.conn, "sense", sense["id"])
 
-        if record_history:
-            _hist.record_create(conn, "entry", entry["id"])
+    def _import_syntactic_behaviours(self) -> None:
+        for frame in self.lex.get("frames", []):
+            frame_text = frame.get("subcategorizationFrame", "")
+            frame_id = frame.get("id") or None
+            if frame_id == "":
+                frame_id = None
+            self.conn.execute(
+                "INSERT OR IGNORE INTO syntactic_behaviours "
+                "(id, lexicon_rowid, frame) VALUES (?, ?, ?)",
+                (frame_id, self.lex_rowid, frame_text),
+            )
+            sb_rowid = self.conn.execute(
+                "SELECT rowid FROM syntactic_behaviours "
+                "WHERE lexicon_rowid = ? AND frame = ?",
+                (self.lex_rowid, frame_text),
+            ).fetchone()[0]
 
-    # Syntactic behaviours
-    for frame in lex.get("frames", []):
-        frame_text = frame.get("subcategorizationFrame", "")
-        frame_id = frame.get("id") or None
-        if frame_id == "":
-            frame_id = None
-        conn.execute(
-            "INSERT OR IGNORE INTO syntactic_behaviours "
-            "(id, lexicon_rowid, frame) VALUES (?, ?, ?)",
-            (frame_id, lex_rowid, frame_text),
-        )
-        sb_rowid = conn.execute(
-            "SELECT rowid FROM syntactic_behaviours "
-            "WHERE lexicon_rowid = ? AND frame = ?",
-            (lex_rowid, frame_text),
-        ).fetchone()[0]
+            for sense_id in frame.get("senses", []):
+                s_rowid = self.sense_id_to_rowid.get(sense_id)
+                if s_rowid:
+                    self.conn.execute(
+                        "INSERT INTO syntactic_behaviour_senses "
+                        "(syntactic_behaviour_rowid, sense_rowid) VALUES (?, ?)",
+                        (sb_rowid, s_rowid),
+                    )
 
-        for sense_id in frame.get("senses", []):
-            s_rowid = sense_id_to_rowid.get(sense_id)
-            if s_rowid:
-                conn.execute(
-                    "INSERT INTO syntactic_behaviour_senses "
-                    "(syntactic_behaviour_rowid, sense_rowid) VALUES (?, ?)",
-                    (sb_rowid, s_rowid),
+    def _import_synset_relations(self) -> None:
+        for syn in self.lex.get("synsets", []):
+            syn_rowid = self.synset_id_to_rowid.get(syn["id"])
+            if syn_rowid is None:
+                continue
+            for rel in syn.get("relations", []):
+                target_id = rel["target"]
+                tgt_rowid = self.synset_id_to_rowid.get(target_id)
+                if tgt_rowid is None:
+                    tgt = self.conn.execute(
+                        "SELECT rowid FROM synsets WHERE id = ?", (target_id,)
+                    ).fetchone()
+                    if tgt:
+                        tgt_rowid = tgt[0]
+                    else:
+                        continue
+
+                type_rowid = self._get_rel_type_rowid(rel["relType"])
+                rel_meta = rel.get("meta")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO synset_relations "
+                    "(lexicon_rowid, source_rowid, target_rowid, type_rowid, metadata) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (self.lex_rowid, syn_rowid, tgt_rowid, type_rowid,
+                     json.dumps(rel_meta) if rel_meta else None),
                 )
 
-    # Insert synset relations (after all synsets exist)
-    for syn in lex.get("synsets", []):
-        syn_rowid = synset_id_to_rowid.get(syn["id"])
-        if syn_rowid is None:
-            continue
-        for rel in syn.get("relations", []):
-            target_id = rel["target"]
-            tgt_rowid = synset_id_to_rowid.get(target_id)
-            if tgt_rowid is None:
-                tgt = conn.execute(
-                    "SELECT rowid FROM synsets WHERE id = ?", (target_id,)
-                ).fetchone()
-                if tgt:
-                    tgt_rowid = tgt[0]
-                else:
+    def _import_sense_relations(self) -> None:
+        for entry in self.lex.get("entries", []):
+            for sense in entry.get("senses", []):
+                src_rowid = self.sense_id_to_rowid.get(sense["id"])
+                if src_rowid is None:
                     continue
+                for rel in sense.get("relations", []):
+                    target_id = rel["target"]
+                    type_rowid = self._get_rel_type_rowid(rel["relType"])
+                    rel_meta = rel.get("meta")
 
-            type_rowid = _get_rel_type_rowid(rel["relType"])
-            rel_meta = rel.get("meta")
-            conn.execute(
-                "INSERT OR IGNORE INTO synset_relations "
-                "(lexicon_rowid, source_rowid, target_rowid, type_rowid, metadata) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (lex_rowid, syn_rowid, tgt_rowid, type_rowid,
-                 json.dumps(rel_meta) if rel_meta else None),
-            )
-
-    # Insert sense relations (after all senses exist)
-    for entry in lex.get("entries", []):
-        for sense in entry.get("senses", []):
-            src_rowid = sense_id_to_rowid.get(sense["id"])
-            if src_rowid is None:
-                continue
-            for rel in sense.get("relations", []):
-                target_id = rel["target"]
-                type_rowid = _get_rel_type_rowid(rel["relType"])
-                rel_meta = rel.get("meta")
-
-                # Is target a sense or a synset?
-                tgt_sense = sense_id_to_rowid.get(target_id)
-                if tgt_sense is None:
-                    tgt_sense_row = conn.execute(
-                        "SELECT rowid FROM senses WHERE id = ?", (target_id,)
-                    ).fetchone()
-                    if tgt_sense_row:
-                        tgt_sense = tgt_sense_row[0]
-
-                if tgt_sense is not None:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO sense_relations "
-                        "(lexicon_rowid, source_rowid, target_rowid, type_rowid, metadata) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (lex_rowid, src_rowid, tgt_sense, type_rowid,
-                         json.dumps(rel_meta) if rel_meta else None),
-                    )
-                else:
-                    # Try as synset
-                    tgt_syn = synset_id_to_rowid.get(target_id)
-                    if tgt_syn is None:
-                        tgt_syn_row = conn.execute(
-                            "SELECT rowid FROM synsets WHERE id = ?",
-                            (target_id,),
+                    # Is target a sense or a synset?
+                    tgt_sense = self.sense_id_to_rowid.get(target_id)
+                    if tgt_sense is None:
+                        tgt_sense_row = self.conn.execute(
+                            "SELECT rowid FROM senses WHERE id = ?", (target_id,)
                         ).fetchone()
-                        if tgt_syn_row:
-                            tgt_syn = tgt_syn_row[0]
+                        if tgt_sense_row:
+                            tgt_sense = tgt_sense_row[0]
 
-                    if tgt_syn is not None:
-                        conn.execute(
-                            "INSERT OR IGNORE INTO sense_synset_relations "
+                    if tgt_sense is not None:
+                        self.conn.execute(
+                            "INSERT OR IGNORE INTO sense_relations "
                             "(lexicon_rowid, source_rowid, target_rowid, type_rowid, metadata) "
                             "VALUES (?, ?, ?, ?, ?)",
-                            (lex_rowid, src_rowid, tgt_syn, type_rowid,
+                            (self.lex_rowid, src_rowid, tgt_sense, type_rowid,
                              json.dumps(rel_meta) if rel_meta else None),
                         )
+                    else:
+                        # Try as synset
+                        tgt_syn = self.synset_id_to_rowid.get(target_id)
+                        if tgt_syn is None:
+                            tgt_syn_row = self.conn.execute(
+                                "SELECT rowid FROM synsets WHERE id = ?",
+                                (target_id,),
+                            ).fetchone()
+                            if tgt_syn_row:
+                                tgt_syn = tgt_syn_row[0]
 
-    # Insert definitions (after senses for sense_rowid resolution)
-    for syn in lex.get("synsets", []):
-        syn_rowid = synset_id_to_rowid.get(syn["id"])
-        if syn_rowid is None:
-            continue
-        for defn in syn.get("definitions", []):
-            sense_rowid = None
-            ss = defn.get("sourceSense")
-            if ss:
-                sense_rowid = sense_id_to_rowid.get(ss)
-                if sense_rowid is None:
-                    sr = conn.execute(
-                        "SELECT rowid FROM senses WHERE id = ?", (ss,)
-                    ).fetchone()
-                    if sr:
-                        sense_rowid = sr[0]
+                        if tgt_syn is not None:
+                            self.conn.execute(
+                                "INSERT OR IGNORE INTO sense_synset_relations "
+                                "(lexicon_rowid, source_rowid, target_rowid, type_rowid, metadata) "
+                                "VALUES (?, ?, ?, ?, ?)",
+                                (self.lex_rowid, src_rowid, tgt_syn, type_rowid,
+                                 json.dumps(rel_meta) if rel_meta else None),
+                            )
 
-            def_meta = defn.get("meta")
-            conn.execute(
-                "INSERT INTO definitions "
-                "(lexicon_rowid, synset_rowid, definition, language, "
-                "sense_rowid, metadata) VALUES (?, ?, ?, ?, ?, ?)",
-                (lex_rowid, syn_rowid, defn.get("text", ""),
-                 defn.get("language") or None, sense_rowid,
-                 json.dumps(def_meta) if def_meta else None),
-            )
+    def _import_definitions(self) -> None:
+        for syn in self.lex.get("synsets", []):
+            syn_rowid = self.synset_id_to_rowid.get(syn["id"])
+            if syn_rowid is None:
+                continue
+            for defn in syn.get("definitions", []):
+                sense_rowid = None
+                ss = defn.get("sourceSense")
+                if ss:
+                    sense_rowid = self.sense_id_to_rowid.get(ss)
+                    if sense_rowid is None:
+                        sr = self.conn.execute(
+                            "SELECT rowid FROM senses WHERE id = ?", (ss,)
+                        ).fetchone()
+                        if sr:
+                            sense_rowid = sr[0]
 
-    # Insert synset examples
-    for syn in lex.get("synsets", []):
-        syn_rowid = synset_id_to_rowid.get(syn["id"])
-        if syn_rowid is None:
-            continue
-        for ex in syn.get("examples", []):
-            ex_meta = ex.get("meta")
-            conn.execute(
-                "INSERT INTO synset_examples "
-                "(lexicon_rowid, synset_rowid, example, language, metadata) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (lex_rowid, syn_rowid, ex.get("text", ""),
-                 ex.get("language") or None,
-                 json.dumps(ex_meta) if ex_meta else None),
-            )
+                def_meta = defn.get("meta")
+                self.conn.execute(
+                    "INSERT INTO definitions "
+                    "(lexicon_rowid, synset_rowid, definition, language, "
+                    "sense_rowid, metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                    (self.lex_rowid, syn_rowid, defn.get("text", ""),
+                     defn.get("language") or None, sense_rowid,
+                     json.dumps(def_meta) if def_meta else None),
+                )
+
+    def _import_synset_examples(self) -> None:
+        for syn in self.lex.get("synsets", []):
+            syn_rowid = self.synset_id_to_rowid.get(syn["id"])
+            if syn_rowid is None:
+                continue
+            for ex in syn.get("examples", []):
+                ex_meta = ex.get("meta")
+                self.conn.execute(
+                    "INSERT INTO synset_examples "
+                    "(lexicon_rowid, synset_rowid, example, language, metadata) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (self.lex_rowid, syn_rowid, ex.get("text", ""),
+                     ex.get("language") or None,
+                     json.dumps(ex_meta) if ex_meta else None),
+                )
+
+    def import_all(self) -> None:
+        """Execute the full import process."""
+        self._create_lexicon_record()
+        self._import_dependencies()
+        self._import_extensions()
+        self._ensure_relation_types_and_lexfiles()
+        self._import_synsets()
+        self._import_entries()
+        self._import_syntactic_behaviours()
+        self._import_synset_relations()
+        self._import_sense_relations()
+        self._import_definitions()
+        self._import_synset_examples()
+
+def _import_lexicon(
+    conn: sqlite3.Connection,
+    lex: dict,
+    *,
+    record_history: bool = True,
+) -> None:
+    """Import one lexicon from a LexicalResource dict."""
+    importer = _LexiconImporter(conn, lex, record_history=record_history)
+    importer.import_all()
 
 
 def _apply_overrides(
