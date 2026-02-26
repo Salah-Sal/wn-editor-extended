@@ -71,10 +71,23 @@ class TestSenseExamples:
     def test_remove_sense_example(self, editor_with_data):
         """TP-DEF-006."""
         ed, ss1, ss2, e1, e2, s1, s2 = editor_with_data
-        ed.add_sense_example(s1.id, "Usage example")
+        ed.add_sense_example(s1.id, "Example 1")
+        ed.add_sense_example(s1.id, "Example 2")
         ed.remove_sense_example(s1.id, 0)
         examples = ed.get_sense_examples(s1.id)
-        assert len(examples) == 0
+        assert len(examples) == 1
+        assert examples[0].text == "Example 2"
+
+    def test_remove_sense_example_invalid_index(self, editor_with_data):
+        ed, ss1, ss2, e1, e2, s1, s2 = editor_with_data
+        ed.add_sense_example(s1.id, "Example 1")
+        with pytest.raises(IndexError):
+            ed.remove_sense_example(s1.id, 99)
+
+    def test_remove_sense_example_invalid_sense(self, editor_with_data):
+        ed, ss1, ss2, e1, e2, s1, s2 = editor_with_data
+        with pytest.raises(EntityNotFoundError):
+            ed.remove_sense_example("nonexistent-sense", 0)
 
     def test_add_sense_example(self, editor_with_data):
         """TP-DEF-007."""
