@@ -119,11 +119,23 @@ def _build_lexicon(
 ) -> dict:
     """Build a single Lexicon TypedDict."""
     lex_rowid = lex_row["rowid"]
+
+    lexicon = _build_lexicon_metadata(lex_row)
+    lexicon["requires"] = _build_lexicon_dependencies(conn, lex_rowid)
+    lexicon["entries"] = _build_lexicon_entries(conn, lex_rowid)
+    lexicon["synsets"] = _build_lexicon_synsets(conn, lex_rowid)
+    lexicon["frames"] = _build_lexicon_frames(conn, lex_rowid)
+
+    return lexicon
+
+
+def _build_lexicon_metadata(lex_row: sqlite3.Row) -> dict[str, Any]:
+    """Build the basic metadata for a lexicon."""
     meta = lex_row["metadata"]
     if isinstance(meta, str):
         meta = json.loads(meta)
 
-    lexicon: dict[str, Any] = {
+    return {
         "id": lex_row["id"],
         "label": lex_row["label"],
         "language": lex_row["language"],
@@ -140,29 +152,41 @@ def _build_lexicon(
         "frames": [],
     }
 
-    # Dependencies
+
+def _build_lexicon_dependencies(conn: sqlite3.Connection, lex_rowid: int) -> list[dict[str, Any]]:
+    """Build the dependencies list for a lexicon."""
     deps = conn.execute(
         "SELECT * FROM lexicon_dependencies WHERE dependent_rowid = ?",
         (lex_rowid,),
     ).fetchall()
+
+    requires = []
     for dep in deps:
-        lexicon["requires"].append({
+        requires.append({
             "id": dep["provider_id"],
             "version": dep["provider_version"],
             "url": dep["provider_url"] or "",
         })
+    return requires
 
-    # Entries
+
+def _build_lexicon_entries(conn: sqlite3.Connection, lex_rowid: int) -> list[dict[str, Any]]:
+    """Build the entries list for a lexicon."""
     entry_rows = conn.execute(
         "SELECT rowid, * FROM entries WHERE lexicon_rowid = ?",
         (lex_rowid,),
     ).fetchall()
 
+    entries = []
     for er in entry_rows:
-        lexicon["entries"].append(
+        entries.append(
             _build_entry(conn, er, lex_rowid)
         )
+    return entries
 
+
+def _build_lexicon_synsets(conn: sqlite3.Connection, lex_rowid: int) -> list[dict[str, Any]]:
+    """Build the synsets list for a lexicon, including pre-fetching related data."""
     # Pre-fetch synset data to avoid N+1 queries
     definitions_map = defaultdict(list)
     for row in conn.execute(
@@ -237,8 +261,9 @@ def _build_lexicon(
         (lex_rowid,),
     ).fetchall()
 
+    synsets = []
     for sr in synset_rows:
-        lexicon["synsets"].append(
+        synsets.append(
             _build_synset(
                 sr,
                 definitions=definitions_map[sr["rowid"]],
@@ -249,12 +274,17 @@ def _build_lexicon(
                 members=members_map[sr["rowid"]],
             )
         )
+    return synsets
 
-    # Syntactic behaviours
+
+def _build_lexicon_frames(conn: sqlite3.Connection, lex_rowid: int) -> list[dict[str, Any]]:
+    """Build the syntactic behaviours (frames) list for a lexicon."""
     sb_rows = conn.execute(
         "SELECT rowid, * FROM syntactic_behaviours WHERE lexicon_rowid = ?",
         (lex_rowid,),
     ).fetchall()
+
+    frames = []
     for sb in sb_rows:
         sense_ids = [
             s["id"]
@@ -265,13 +295,12 @@ def _build_lexicon(
                 (sb["rowid"],),
             ).fetchall()
         ]
-        lexicon["frames"].append({
+        frames.append({
             "id": sb["id"] or "",
             "subcategorizationFrame": sb["frame"],
             "senses": sense_ids,
         })
-
-    return lexicon
+    return frames
 
 
 def _build_entry(
