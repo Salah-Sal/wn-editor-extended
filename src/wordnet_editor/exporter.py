@@ -49,12 +49,9 @@ def commit_to_wn(
         wn.config._dbpath = Path(db_path)
 
     try:
-        with tempfile.NamedTemporaryFile(
-            suffix=".xml", delete=False
-        ) as tmp:
-            tmp_path = tmp.name
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = os.path.join(tmpdir, "export.xml")
 
-        try:
             export_to_lmf(conn, tmp_path, lexicon_ids=lexicon_ids)
 
             # Remove existing lexicons from wn
@@ -72,8 +69,6 @@ def commit_to_wn(
                             break
 
             wn.add(tmp_path)
-        finally:
-            os.unlink(tmp_path)
     finally:
         if original_path is not None:
             wn.config._dbpath = original_path
