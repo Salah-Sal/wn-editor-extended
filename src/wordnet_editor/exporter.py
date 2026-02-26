@@ -326,7 +326,7 @@ def _build_entry(
 
     senses_list = []
     for sr in sense_rows:
-        senses_list.append(_build_sense(conn, sr, lex_rowid))
+        senses_list.append(_build_sense(conn, sr))
 
     # Entry index
     idx_row = conn.execute(
@@ -347,10 +347,40 @@ def _build_entry(
     return entry
 
 
+def _query_relations(
+    conn: sqlite3.Connection,
+    source_rowid: int,
+    relation_table: str,
+    target_table: str,
+) -> list[dict]:
+    """Helper to build a list of relations from a relation table."""
+    relations = []
+    # Note: Interpolating table names is safe here as they are internal constants
+    query = (
+        f"SELECT sr.*, rt.type FROM {relation_table} sr "
+        "JOIN relation_types rt ON sr.type_rowid = rt.rowid "
+        "WHERE sr.source_rowid = ?"
+    )
+    for rel in conn.execute(query, (source_rowid,)).fetchall():
+        tgt = conn.execute(
+            f"SELECT id FROM {target_table} WHERE rowid = ?",
+            (rel["target_rowid"],),
+        ).fetchone()
+        if tgt:
+            rel_meta = rel["metadata"]
+            if isinstance(rel_meta, str):
+                rel_meta = json.loads(rel_meta)
+            relations.append({
+                "target": tgt["id"],
+                "relType": rel["type"],
+                "meta": rel_meta,
+            })
+    return relations
+
+
 def _build_sense(
     conn: sqlite3.Connection,
     sr: sqlite3.Row,
-    lex_rowid: int,
 ) -> dict:
     """Build a Sense TypedDict."""
     sense_rowid = sr["rowid"]
@@ -366,47 +396,16 @@ def _build_sense(
     synset_id = syn_row["id"] if syn_row else ""
 
     # Sense relations
-    relations = []
-    for rel in conn.execute(
-        "SELECT sr.*, rt.type FROM sense_relations sr "
-        "JOIN relation_types rt ON sr.type_rowid = rt.rowid "
-        "WHERE sr.source_rowid = ?",
-        (sense_rowid,),
-    ).fetchall():
-        tgt = conn.execute(
-            "SELECT id FROM senses WHERE rowid = ?",
-            (rel["target_rowid"],),
-        ).fetchone()
-        if tgt:
-            rel_meta = rel["metadata"]
-            if isinstance(rel_meta, str):
-                rel_meta = json.loads(rel_meta)
-            relations.append({
-                "target": tgt["id"],
-                "relType": rel["type"],
-                "meta": rel_meta,
-            })
+    relations = _query_relations(
+        conn, sense_rowid, "sense_relations", "senses"
+    )
 
     # Sense-synset relations
-    for ssrel in conn.execute(
-        "SELECT sr.*, rt.type FROM sense_synset_relations sr "
-        "JOIN relation_types rt ON sr.type_rowid = rt.rowid "
-        "WHERE sr.source_rowid = ?",
-        (sense_rowid,),
-    ).fetchall():
-        tgt = conn.execute(
-            "SELECT id FROM synsets WHERE rowid = ?",
-            (ssrel["target_rowid"],),
-        ).fetchone()
-        if tgt:
-            rel_meta = ssrel["metadata"]
-            if isinstance(rel_meta, str):
-                rel_meta = json.loads(rel_meta)
-            relations.append({
-                "target": tgt["id"],
-                "relType": ssrel["type"],
-                "meta": rel_meta,
-            })
+    relations.extend(
+        _query_relations(
+            conn, sense_rowid, "sense_synset_relations", "synsets"
+        )
+    )
 
     # Examples
     examples = []
