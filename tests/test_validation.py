@@ -338,3 +338,22 @@ class TestShortProposedILIDefinition:
         )
         results = ed.validate()
         assert any(r.rule_id == "VAL-SYN-008" for r in results)
+
+
+class TestRedundantEntries:
+    """VAL-ENT-003: Redundant entries: same lemma references same synset."""
+
+    def test_duplicate_lemma_same_synset(self, editor_with_lexicon):
+        ed = editor_with_lexicon
+        ss = ed.create_synset("test", "n", "A feline animal")
+
+        # Create two entries with the same lemma "cat"
+        e1 = ed.create_entry("test", "cat", "n")
+        e2 = ed.create_entry("test", "cat", "n")
+
+        # Link both to the same synset
+        ed.add_sense(e1.id, ss.id)
+        ed.add_sense(e2.id, ss.id)
+
+        results = ed.validate()
+        assert any(r.rule_id == "VAL-ENT-003" for r in results)
