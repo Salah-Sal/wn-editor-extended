@@ -147,13 +147,28 @@ def _build_resource_from_wn_db(
         "frames": [],
     }
 
+    synsets, synset_map = _build_synsets(wn_conn, lex_rowid)
+    lexicon["synsets"] = synsets
+    lexicon["entries"] = _build_entries(wn_conn, lex_rowid, synset_map)
+    lexicon["frames"] = _build_frames(wn_conn, lex_rowid)
+    lexicon["requires"] = _build_dependencies(wn_conn, lex_rowid)
+
+    return {"lmf_version": "1.4", "lexicons": [lexicon]}
+
+
+def _build_synsets(
+    wn_conn: sqlite3.Connection, lex_rowid: int
+) -> tuple[list[dict[str, Any]], dict[int, str]]:
+    """Build synsets list from wn database."""
+    synsets: list[dict[str, Any]] = []
+    synset_rowid_to_id: dict[int, str] = {}
+
     # Fetch synsets
     synset_rows = wn_conn.execute(
         "SELECT rowid, * FROM synsets WHERE lexicon_rowid = ?",
         (lex_rowid,),
     ).fetchall()
 
-    synset_rowid_to_id: dict[int, str] = {}
     for sr in synset_rows:
         synset_rowid_to_id[sr["rowid"]] = sr["id"]
 
@@ -265,7 +280,16 @@ def _build_resource_from_wn_db(
                 "text": proposed["definition"] or "",
                 "meta": _parse_meta(proposed.get("metadata")),
             }
-        lexicon["synsets"].append(synset)
+        synsets.append(synset)
+
+    return synsets, synset_rowid_to_id
+
+
+def _build_entries(
+    wn_conn: sqlite3.Connection, lex_rowid: int, synset_map: dict[int, str]
+) -> list[dict[str, Any]]:
+    """Build entries list from wn database."""
+    entries: list[dict[str, Any]] = []
 
     # Fetch entries
     entry_rows = wn_conn.execute(
@@ -329,10 +353,15 @@ def _build_resource_from_wn_db(
 
         senses_list = []
         for sr in sense_rows:
-            synset_id_for_sense = wn_conn.execute(
-                "SELECT id FROM synsets WHERE rowid = ?",
-                (sr["synset_rowid"],),
-            ).fetchone()
+            # Resolve synset ID efficiently using the map
+            synset_id = synset_map.get(sr["synset_rowid"])
+            if not synset_id:
+                # Fallback if somehow missing from map (e.g. cross-lexicon?)
+                synset_row = wn_conn.execute(
+                    "SELECT id FROM synsets WHERE rowid = ?",
+                    (sr["synset_rowid"],),
+                ).fetchone()
+                synset_id = synset_row["id"] if synset_row else ""
 
             # Sense relations
             sense_rels = []
@@ -408,7 +437,7 @@ def _build_resource_from_wn_db(
 
             sense: dict[str, Any] = {
                 "id": sr["id"],
-                "synset": synset_id_for_sense["id"] if synset_id_for_sense else "",
+                "synset": synset_id,
                 "n": sr.get("entry_rank") or 0,
                 "lexicalized": unlex_sense is None,
                 "adjposition": adj_row["adjposition"] if adj_row else "",
@@ -435,7 +464,14 @@ def _build_resource_from_wn_db(
         }
         if idx_row:
             entry["index"] = idx_row["lemma"]
-        lexicon["entries"].append(entry)
+        entries.append(entry)
+
+    return entries
+
+
+def _build_frames(wn_conn: sqlite3.Connection, lex_rowid: int) -> list[dict[str, Any]]:
+    """Build syntactic behaviours list from wn database."""
+    frames: list[dict[str, Any]] = []
 
     # Syntactic behaviours
     sb_rows = wn_conn.execute(
@@ -452,11 +488,18 @@ def _build_resource_from_wn_db(
                 (sb["rowid"],),
             ).fetchall()
         ]
-        lexicon["frames"].append({
+        frames.append({
             "id": sb.get("id") or "",
             "subcategorizationFrame": sb["frame"],
             "senses": sense_ids,
         })
+
+    return frames
+
+
+def _build_dependencies(wn_conn: sqlite3.Connection, lex_rowid: int) -> list[dict[str, Any]]:
+    """Build dependencies list from wn database."""
+    requires: list[dict[str, Any]] = []
 
     # Dependencies
     deps = wn_conn.execute(
@@ -464,13 +507,13 @@ def _build_resource_from_wn_db(
         (lex_rowid,),
     ).fetchall()
     for dep in deps:
-        lexicon["requires"].append({
+        requires.append({
             "id": dep["provider_id"],
             "version": dep["provider_version"],
             "url": dep.get("provider_url") or "",
         })
 
-    return {"lmf_version": "1.4", "lexicons": [lexicon]}
+    return requires
 
 
 def _parse_meta(val: Any) -> dict | None:
