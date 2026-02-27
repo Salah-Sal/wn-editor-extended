@@ -110,15 +110,11 @@ def _import_from_wn_xml(
             f"Lexicon not found in wn: {specifier!r}"
         )
 
-    with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
-        tmp_path = tmp.name
-
-    try:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = os.path.join(tmp_dir, "export.xml")
         wn.export([target], tmp_path)
         resource = wn.lmf.load(tmp_path)
         _import_resource(conn, resource, record_history=record_history)  # type: ignore[arg-type]
-    finally:
-        os.unlink(tmp_path)
 
 
 def _build_resource_from_wn_db(
