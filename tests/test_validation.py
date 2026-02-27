@@ -319,3 +319,22 @@ class TestSenseRefMissingSynset:
             r.rule_id == "VAL-ENT-004" and r.entity_id == s1.id
             for r in results
         )
+
+
+class TestShortProposedILIDefinition:
+    """VAL-SYN-008: proposed ILI definition < 20 chars."""
+
+    def test_proposed_ili_short_definition(self, editor_with_lexicon):
+        ed = editor_with_lexicon
+        ss = ed.create_synset("test", "n", "Some definition")
+        # Insert a proposed ILI with short definition directly
+        ss_rowid = ed._conn.execute(
+            "SELECT rowid FROM synsets WHERE id = ?", (ss.id,)
+        ).fetchone()[0]
+        ed._conn.execute(
+            "INSERT INTO proposed_ilis (synset_rowid, definition) "
+            "VALUES (?, 'Too short')",
+            (ss_rowid,),
+        )
+        results = ed.validate()
+        assert any(r.rule_id == "VAL-SYN-008" for r in results)
