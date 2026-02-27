@@ -1,5 +1,6 @@
 """Tests for change tracking / edit history."""
 
+import datetime
 import time
 
 
@@ -46,12 +47,18 @@ class TestHistoryTimestamp:
 
     def test_filter_by_timestamp(self, editor_with_lexicon):
         ed = editor_with_lexicon
-        ed.create_synset("test", "n", "First concept")
-        time.sleep(0.05)
-        middle = time.strftime("%Y-%m-%dT%H:%M:%S")
-        time.sleep(0.05)
-        ss2 = ed.create_synset("test", "n", "Second concept")
+        s1 = ed.create_synset("test", "n", "First concept")
+
+        # Database uses UTC timestamps with microseconds
+        time.sleep(0.1)
+        # Use UTC to match database
+        middle = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
+        time.sleep(0.1)
+
+        s2 = ed.create_synset("test", "n", "Second concept")
 
         changes = ed.get_changes_since(middle)
+
         # Should include the second synset but not the first
-        assert any(h.entity_id == ss2.id for h in changes)
+        assert any(h.entity_id == s2.id for h in changes)
+        assert not any(h.entity_id == s1.id for h in changes)
