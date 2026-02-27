@@ -148,8 +148,19 @@ class TestFullFeaturesRoundTrip:
             assert lemma_form.written_form == "cat"
             # Check pronunciations on lemma
             assert len(lemma_form.pronunciations) >= 1
+            # Verify pronunciation values are not silently dropped
+            us_pron = next(
+                p for p in lemma_form.pronunciations if p.variety == "US"
+            )
+            assert us_pron.value == "/kæt/"
+            assert us_pron.notation == "IPA"
             # Check tags on lemma
             assert len(lemma_form.tags) >= 1
+            # Verify tag text is not silently dropped
+            freq_tag = next(
+                t for t in lemma_form.tags if t.category == "frequency"
+            )
+            assert freq_tag.tag == "high"
 
             # Synsets with definitions
             synsets = ed.find_synsets(lexicon_id="test-full")
@@ -210,11 +221,21 @@ class TestFullFeaturesRoundTrip:
                     synsets2 = ed2.find_synsets(lexicon_id="test-full")
                     assert len(synsets2) == 5
 
-                    # Verify pronunciations survived
+                    # Verify pronunciations survived with correct values
                     cat2 = next(e for e in entries2 if e.lemma == "cat")
                     forms2 = ed2.get_forms(cat2.id)
                     lemma2 = forms2[0]
                     assert len(lemma2.pronunciations) >= 1
+                    us_pron2 = next(
+                        p for p in lemma2.pronunciations if p.variety == "US"
+                    )
+                    assert us_pron2.value == "/kæt/"
+                    # Verify tags survived with correct values
+                    assert len(lemma2.tags) >= 1
+                    freq_tag2 = next(
+                        t for t in lemma2.tags if t.category == "frequency"
+                    )
+                    assert freq_tag2.tag == "high"
                 finally:
                     ed2.close()
             finally:

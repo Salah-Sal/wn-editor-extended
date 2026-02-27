@@ -772,7 +772,7 @@ def _import_lexicon(
                 "(form_rowid, lexicon_rowid, value, variety, notation, phonemic, audio) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (lemma_form_rowid, lex_rowid,
-                 pron.get("value") or None,
+                 pron.get("value") or pron.get("text") or None,
                  pron.get("variety") or None,
                  pron.get("notation") or None,
                  1 if pron.get("phonemic", True) else 0,
@@ -785,7 +785,7 @@ def _import_lexicon(
                 "INSERT INTO tags (form_rowid, lexicon_rowid, tag, category) "
                 "VALUES (?, ?, ?, ?)",
                 (lemma_form_rowid, lex_rowid,
-                 tag.get("tag"), tag.get("category")),
+                 tag.get("tag") or tag.get("text"), tag.get("category")),
             )
 
         # Additional forms
@@ -812,7 +812,7 @@ def _import_lexicon(
                     "(form_rowid, lexicon_rowid, value, variety, notation, phonemic, audio) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (form_rowid, lex_rowid,
-                     pron.get("value") or None,
+                     pron.get("value") or pron.get("text") or None,
                      pron.get("variety") or None,
                      pron.get("notation") or None,
                      1 if pron.get("phonemic", True) else 0,
@@ -824,7 +824,7 @@ def _import_lexicon(
                     "INSERT INTO tags (form_rowid, lexicon_rowid, tag, category) "
                     "VALUES (?, ?, ?, ?)",
                     (form_rowid, lex_rowid,
-                     tag.get("tag"), tag.get("category")),
+                     tag.get("tag") or tag.get("text"), tag.get("category")),
                 )
 
         # Senses
