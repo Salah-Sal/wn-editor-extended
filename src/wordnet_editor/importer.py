@@ -92,8 +92,6 @@ def _import_from_wn_xml(
     import os
     import tempfile
 
-    import wn.lmf
-
     import wn
 
     lexicons = wn.lexicons()
