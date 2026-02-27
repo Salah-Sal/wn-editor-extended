@@ -103,6 +103,6 @@ class TestMoveSense:
         ed, ss1, ss2, e1, e2, s1, s2 = editor_with_data
         # e1 already has s1 in ss1. Add another sense for e1 in ss2
         # Then try to move s1 to ss2 - should fail
-        s_extra = ed.add_sense(e1.id, ss2.id)
+        ed.add_sense(e1.id, ss2.id)
         with pytest.raises(DuplicateEntityError):
             ed.move_sense(s1.id, ss2.id)
