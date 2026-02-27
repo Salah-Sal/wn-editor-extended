@@ -1,7 +1,5 @@
 """Tests for batch operations."""
 
-import pytest
-
 
 class TestBatchCommit:
     """TP-BATCH-001."""
