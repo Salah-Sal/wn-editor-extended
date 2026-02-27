@@ -295,3 +295,27 @@ class TestLowConfidenceSense:
         ed.set_confidence("sense", s1.id, 0.4)
         results = ed.validate()
         assert any(r.rule_id == "VAL-EDT-003" for r in results)
+
+
+class TestSenseRefMissingSynset:
+    """VAL-ENT-004: sense references missing synset."""
+
+    def test_sense_ref_missing_synset(self, editor_with_data):
+        ed, ss1, ss2, e1, e2, s1, s2 = editor_with_data
+        # s1 is a sense for e1 and ss1.
+        # We want to delete ss1 but keep s1 to create an orphan.
+        ss1_rowid = ed._conn.execute(
+            "SELECT rowid FROM synsets WHERE id = ?", (ss1.id,)
+        ).fetchone()[0]
+
+        ed._conn.execute("PRAGMA foreign_keys = OFF")
+        ed._conn.execute(
+            "DELETE FROM synsets WHERE rowid = ?", (ss1_rowid,)
+        )
+        ed._conn.execute("PRAGMA foreign_keys = ON")
+
+        results = ed.validate()
+        assert any(
+            r.rule_id == "VAL-ENT-004" and r.entity_id == s1.id
+            for r in results
+        )
