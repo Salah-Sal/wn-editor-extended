@@ -352,7 +352,7 @@ If `lexicon_ids` specified, query those. Otherwise, query all.
 ```sql
 SELECT rowid, specifier, id, label, language, email, license, version,
        url, citation, logo, metadata FROM lexicons
-WHERE id IN (:ids)  -- or no WHERE for all
+WHERE rowid IN (:rowids)  -- resolved via get_lexicon_rowid(), which accepts both bare IDs and "id:version" specifiers
 ```
 
 **Step 2: Build LexicalResource dict**
@@ -460,7 +460,12 @@ This includes validation (Step 7 of 6.3). If export fails validation, `ExportErr
 **Step 3: Remove existing lexicons from wn** (if they exist)
 ```python
 for lex_id in lexicon_ids or self._all_lexicon_ids():
-    for lex in wn.lexicons(lexicon=lex_id):
+    rowid = _resolve_lexicon_rowid(conn, lex_id)
+    row = conn.execute(
+        "SELECT id, version FROM lexicons WHERE rowid = ?", (rowid,)
+    ).fetchone()
+    specifier = f"{row['id']}:{row['version']}"
+    for lex in wn.lexicons(lexicon=specifier):
         wn.remove(lex.specifier())
 ```
 

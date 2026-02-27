@@ -332,7 +332,7 @@ On export to WN-LMF XML, a confidence score is written to an entity's metadata o
 
 ### RULE-IMPORT-001: Import is additive
 
-Importing data (from XML or `wn` DB) adds to the editor database. It does not delete or overwrite existing data. If a lexicon with the same `(id, version)` already exists, raise `DuplicateEntityError`.
+Importing data (from XML or `wn` DB) adds to the editor database. It does not delete or overwrite existing data. If a lexicon with the same `id` already exists (any version), raise `DuplicateEntityError`. The user must delete the existing lexicon before importing a new version with the same ID.
 
 ### RULE-IMPORT-002: Import preserves IDs
 

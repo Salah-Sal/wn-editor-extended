@@ -61,8 +61,10 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 
 ### TP-LEX-002: Create duplicate lexicon
 - **Setup**: Lexicon "awn:4.0" exists
-- **Action**: `create_lexicon("awn", ..., version="4.0")`
-- **Verify**: Raises `DuplicateEntityError`
+- **Action A**: `create_lexicon("awn", ..., version="4.0")` (same version)
+- **Verify A**: Raises `DuplicateEntityError`
+- **Action B**: `create_lexicon("awn", ..., version="5.0")` (different version, same ID)
+- **Verify B**: Raises `DuplicateEntityError` — the editor prevents multiple versions of the same lexicon ID
 
 ### TP-LEX-003: Update lexicon
 - **Setup**: Lexicon exists
@@ -429,8 +431,10 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 
 ### TP-RT-005: Import duplicate lexicon
 - **Setup**: Lexicon already imported
-- **Action**: `import_lmf("same_lexicon.xml")`
-- **Verify**: Raises `DuplicateEntityError`
+- **Action A**: `import_lmf("same_lexicon.xml")` (same ID and version)
+- **Verify A**: Raises `DuplicateEntityError`
+- **Action B**: `import_lmf("same_id_different_version.xml")` (same ID, different version)
+- **Verify B**: Raises `DuplicateEntityError` — the same-ID guard applies regardless of version
 
 ### TP-RT-006: Minimal-diff fidelity test
 - **Setup**: Import a large WordNet (e.g., OEWN) via `from_wn("ewn:2024")`
@@ -573,3 +577,35 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 - **Setup**: Load `extension.xml` fixture containing a lexicon extension
 - **Action**: `from_lmf("extension.xml", "test.db")`
 - **Verify**: Extension's `extends` attribute preserved. Extension entries correctly reference base lexicon synsets.
+
+---
+
+## Lexicon Version Disambiguation
+
+Tests in `test_lexicon_versioning.py` (26 tests) cover the three-layer defence against version ambiguity. See Known Issue #1 in `known-issues.md` for background.
+
+### TP-VER-001: Prevention — same-ID guard in `create_lexicon`
+- **Setup**: Lexicon "test-lex:1.0" exists
+- **Action**: `create_lexicon("test-lex", ..., version="2.0")`
+- **Verify**: Raises `DuplicateEntityError`
+
+### TP-VER-002: Prevention — same-ID guard in `import_lmf`
+- **Setup**: Lexicon "test-lex" already imported
+- **Action**: Import XML containing a lexicon with `id="test-lex"` but different version
+- **Verify**: Raises `DuplicateEntityError`
+
+### TP-VER-003: Rowid-based mutations
+- **Verify**: All mutation queries (`UPDATE`, `INSERT`, `DELETE`) on entries, senses, synsets, relations, definitions, and examples use `WHERE lexicon_rowid = ?` (resolved via `get_lexicon_rowid()`) instead of `WHERE id = ?`
+- **Coverage**: `add_entry`, `add_synset`, `add_sense`, `add_synset_relation`, `add_sense_relation`, `update_synset`, `delete_entry`, `delete_synset`, `remove_synset_relation`, `remove_sense_relation`
+
+### TP-VER-004: Specifier support across APIs
+- **Setup**: Lexicon "test-lex:1.0" exists
+- **Verify**: All `lexicon_id`-accepting methods work with both bare ID `"test-lex"` and specifier `"test-lex:1.0"`
+- **Coverage**: `get_lexicon`, `update_lexicon`, `delete_lexicon`, `find_entries`, `add_entry`, `add_synset`, `export_lmf`, `validate`, `commit`
+
+### TP-VER-005: `LexiconModel.specifier` property
+- **Setup**: Create lexicon with id="awn", version="4.0"
+- **Verify**: `model.specifier == "awn:4.0"`
+
+### TP-VER-006: Backwards compatibility
+- **Verify**: Existing tests that use bare IDs continue to pass without modification

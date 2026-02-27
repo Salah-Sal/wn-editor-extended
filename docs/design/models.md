@@ -29,6 +29,10 @@ class LexiconModel:
     citation: str | None       # Citation text
     logo: str | None           # Logo image URL
     metadata: dict | None      # Dublin Core metadata (dc:publisher, etc.)
+
+    @property
+    def specifier(self) -> str:
+        """Returns ``"id:version"`` (e.g., ``"awn:1.0"``)."""
 ```
 
 ### SynsetModel

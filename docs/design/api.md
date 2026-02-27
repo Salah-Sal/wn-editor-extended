@@ -111,6 +111,8 @@ with WordnetEditor("my.db") as editor:
 
 ## 3.2 — Lexicon Management
 
+> **Specifier format**: Throughout this API, any `lexicon_id` parameter accepts either a bare ID (e.g., `"awn"`) or a specifier string `"id:version"` (e.g., `"awn:1.0"`). Bare IDs are sufficient when only one version of a lexicon exists. The specifier format is required to disambiguate if the underlying `wn` database contains multiple versions of the same lexicon (e.g., after a `wn.download`).
+
 ### `create_lexicon(id: str, label: str, language: str, email: str, license: str, version: str, *, url: str | None = None, citation: str | None = None, logo: str | None = None, metadata: dict | None = None) -> LexiconModel`
 
 **Description**: Create a new lexicon in the editor database.
@@ -126,7 +128,7 @@ with WordnetEditor("my.db") as editor:
 **Returns**: The created `LexiconModel`.
 
 **Raises**:
-- `DuplicateEntityError` — If a lexicon with same `(id, version)` already exists.
+- `DuplicateEntityError` — If a lexicon with the same `id` already exists (regardless of version). Delete the existing lexicon first or use a different ID.
 
 ### `update_lexicon(lexicon_id: str, *, label: str | None = None, email: str | None = None, license: str | None = None, url: str | None = ..., citation: str | None = ..., logo: str | None = ..., metadata: dict | None = ...) -> LexiconModel`
 
@@ -580,7 +582,7 @@ editor.add_synset_relation("awn-00001-n", "hypernym", "awn-00002-n")
 
 **Raises**:
 - `DataImportError` — If the XML is malformed.
-- `DuplicateEntityError` — If a lexicon with same `(id, version)` already exists.
+- `DuplicateEntityError` — If a lexicon with the same `id` already exists (regardless of version).
 
 ### `export_lmf(destination: str | Path, *, lexicon_ids: list[str] | None = None, lmf_version: str = "1.4")`
 
