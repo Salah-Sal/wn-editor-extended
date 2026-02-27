@@ -180,9 +180,21 @@ def validate_relations(
 # Individual rule implementations
 # ------------------------------------------------------------------
 
-def _lex_filter(lexicon_id: str | None) -> tuple[str, list]:
+def _lex_filter(
+    lexicon_id: str | None,
+    conn: sqlite3.Connection | None = None,
+) -> tuple[str, list]:
     if lexicon_id is None:
         return "", []
+    # Resolve via the specifier-aware helper when a connection is available.
+    # This supports both bare IDs ("awn") and specifiers ("awn:1.0").
+    if conn is not None:
+        from wordnet_editor import db as _db
+        rowid = _db.get_lexicon_rowid(conn, lexicon_id)
+        if rowid is None:
+            return " AND 0", []  # match nothing
+        return " AND lexicon_rowid = ?", [rowid]
+    # Legacy fallback (no conn) — uses subquery.
     return (
         " AND lexicon_rowid = (SELECT rowid FROM lexicons WHERE id = ?)",
         [lexicon_id],
@@ -219,7 +231,7 @@ def _val_gen_001(
 ) -> list[ValidationResult]:
     """Duplicate IDs within a lexicon."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     for table, etype in [
         ("synsets", "synset"),
         ("entries", "entry"),
@@ -234,7 +246,7 @@ def _val_ent_001(
 ) -> list[ValidationResult]:
     """Entries with no senses."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT e.id FROM entries e WHERE NOT EXISTS "
         "(SELECT 1 FROM senses s WHERE s.entry_rowid = e.rowid)"
@@ -257,7 +269,7 @@ def _val_ent_002(
 ) -> list[ValidationResult]:
     """Redundant senses: entry with multiple senses for same synset."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.entry_rowid, s.synset_rowid, COUNT(*) as cnt, "
         "e.id as entry_id, syn.id as synset_id "
@@ -287,7 +299,7 @@ def _val_ent_003(
 ) -> list[ValidationResult]:
     """Redundant entries: same lemma references same synset."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT f.form, s.synset_rowid, COUNT(DISTINCT e.rowid) as cnt "
         "FROM entries e "
@@ -316,7 +328,7 @@ def _val_ent_004(
 ) -> list[ValidationResult]:
     """Sense references missing synset."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id, s.synset_rowid FROM senses s "
         f"WHERE NOT EXISTS (SELECT 1 FROM synsets syn WHERE syn.rowid = s.synset_rowid)"
@@ -339,7 +351,7 @@ def _val_syn_001(
 ) -> list[ValidationResult]:
     """Empty synsets (unlexicalized)."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id FROM synsets s "
         "JOIN unlexicalized_synsets u ON u.synset_rowid = s.rowid"
@@ -362,7 +374,7 @@ def _val_syn_002(
 ) -> list[ValidationResult]:
     """ILI used by multiple synsets."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT i.id as ili_id, COUNT(*) as cnt "
         "FROM synsets s JOIN ilis i ON s.ili_rowid = i.rowid "
@@ -387,7 +399,7 @@ def _val_syn_005(
 ) -> list[ValidationResult]:
     """Blank definitions."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id, d.definition FROM definitions d "
         "JOIN synsets s ON d.synset_rowid = s.rowid "
@@ -411,7 +423,7 @@ def _val_syn_007(
 ) -> list[ValidationResult]:
     """Duplicate definitions across synsets."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT d.definition, COUNT(DISTINCT d.synset_rowid) as cnt "
         "FROM definitions d "
@@ -436,7 +448,7 @@ def _val_syn_008(
 ) -> list[ValidationResult]:
     """Proposed ILI definition < 20 chars."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id, p.definition FROM proposed_ilis p "
         "JOIN synsets s ON p.synset_rowid = s.rowid "
@@ -460,7 +472,7 @@ def _val_rel_001(
 ) -> list[ValidationResult]:
     """Dangling relation targets."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
 
     # Synset relations with missing target
     sql = (
@@ -488,7 +500,7 @@ def _val_rel_004(
 ) -> list[ValidationResult]:
     """Missing inverse relations."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
 
     sql = (
         "SELECT src.id as source_id, tgt.id as target_id, rt.type "
@@ -554,7 +566,7 @@ def _val_rel_005(
 ) -> list[ValidationResult]:
     """Self-loop relations."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
 
     sql = (
         "SELECT src.id as source_id, rt.type "
@@ -582,7 +594,7 @@ def _val_tax_001(
 ) -> list[ValidationResult]:
     """POS mismatch with hypernym."""
     results: list[ValidationResult] = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
 
     hypernym_type = conn.execute(
         "SELECT rowid FROM relation_types WHERE type = 'hypernym'"
@@ -621,7 +633,7 @@ def _val_edt_001(
 ) -> list[ValidationResult]:
     """ID prefix validation."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
 
     for table, etype in [
         ("synsets", "synset"),
@@ -652,7 +664,7 @@ def _val_edt_002(
 ) -> list[ValidationResult]:
     """Synsets with no definitions."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id FROM synsets s WHERE NOT EXISTS "
         "(SELECT 1 FROM definitions d WHERE d.synset_rowid = s.rowid)"
@@ -675,7 +687,7 @@ def _val_edt_003(
 ) -> list[ValidationResult]:
     """Sense with low confidence."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id, s.metadata FROM senses s "
         f"WHERE s.metadata IS NOT NULL"
@@ -707,7 +719,7 @@ def _val_syn_003(
 ) -> list[ValidationResult]:
     """Proposed ILI (ili='in') missing definition in proposed_ilis."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id FROM synsets s "
         "JOIN proposed_ilis p ON p.synset_rowid = s.rowid "
@@ -731,7 +743,7 @@ def _val_syn_004(
 ) -> list[ValidationResult]:
     """Existing ILI has spurious proposed ILI entry."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id FROM synsets s "
         "JOIN proposed_ilis p ON p.synset_rowid = s.rowid "
@@ -755,7 +767,7 @@ def _val_syn_006(
 ) -> list[ValidationResult]:
     """Blank synset examples."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id FROM synset_examples e "
         "JOIN synsets s ON e.synset_rowid = s.rowid "
@@ -779,7 +791,7 @@ def _val_rel_002(
 ) -> list[ValidationResult]:
     """Relation type invalid for source/target entity pair."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
 
     # Synset relations with invalid type
     sql = (
@@ -848,7 +860,7 @@ def _val_rel_003(
 ) -> list[ValidationResult]:
     """Redundant relations (duplicate source, type, target)."""
     results = []
-    filt, params = _lex_filter(lexicon_id)
+    filt, params = _lex_filter(lexicon_id, conn)
 
     for table, etype, src_join, src_id_col in [
         ("synset_relations", "synset", "synsets", "id"),

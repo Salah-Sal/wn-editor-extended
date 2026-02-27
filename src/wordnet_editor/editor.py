@@ -180,21 +180,34 @@ class WordnetEditor:
             DuplicateEntityError: A lexicon with the same *id* and *version*
                 already exists.
         """
-        specifier = f"{id}:{version}"
-        try:
-            self._conn.execute(
-                "INSERT INTO lexicons "
-                "(specifier, id, label, language, email, license, version, "
-                "url, citation, logo, metadata, modified) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                (specifier, id, label, language, email, license, version,
-                 url, citation, logo,
-                 json.dumps(metadata) if metadata else None),
-            )
-        except sqlite3.IntegrityError as e:
+        # Guard: block same-ID different-version coexistence.
+        # The schema allows it (UNIQUE(id, version)), but the editor API
+        # resolves lexicons by bare id — simultaneous versions would cause
+        # silent data corruption in every get/update/delete path.
+        existing = self._conn.execute(
+            "SELECT version FROM lexicons WHERE id = ?", (id,)
+        ).fetchone()
+        if existing:
+            if existing["version"] == version:
+                raise DuplicateEntityError(
+                    f"Lexicon with id={id!r} version={version!r} already exists"
+                )
             raise DuplicateEntityError(
-                f"Lexicon with id={id!r} version={version!r} already exists"
-            ) from e
+                f"Lexicon with id={id!r} already exists "
+                f"(version {existing['version']!r}). "
+                f"Delete it first or use a different ID."
+            )
+
+        specifier = f"{id}:{version}"
+        self._conn.execute(
+            "INSERT INTO lexicons "
+            "(specifier, id, label, language, email, license, version, "
+            "url, citation, logo, metadata, modified) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            (specifier, id, label, language, email, license, version,
+             url, citation, logo,
+             json.dumps(metadata) if metadata else None),
+        )
 
         _hist.record_create(self._conn, "lexicon", id, {"id": id, "label": label})
         return LexiconModel(
@@ -258,6 +271,7 @@ class WordnetEditor:
         if metadata is not _UNSET:
             updates["metadata"] = json.dumps(metadata) if metadata else None
 
+        lex_rowid = row["rowid"]
         for field, val in updates.items():
             old_val = row[field]
             is_meta = field == "metadata"
@@ -267,14 +281,14 @@ class WordnetEditor:
                 self._conn, "lexicon", lexicon_id, field, row[field], val
             )
             self._conn.execute(
-                f"UPDATE lexicons SET {field} = ? WHERE id = ?",
-                (val, lexicon_id),
+                f"UPDATE lexicons SET {field} = ? WHERE rowid = ?",
+                (val, lex_rowid),
             )
 
         if updates:
             self._conn.execute(
-                "UPDATE lexicons SET modified = 1 WHERE id = ?",
-                (lexicon_id,),
+                "UPDATE lexicons SET modified = 1 WHERE rowid = ?",
+                (lex_rowid,),
             )
 
         return self.get_lexicon(lexicon_id)
@@ -319,7 +333,9 @@ class WordnetEditor:
         if row is None:
             raise EntityNotFoundError(f"Lexicon not found: {lexicon_id!r}")
         _hist.record_delete(self._conn, "lexicon", lexicon_id)
-        self._conn.execute("DELETE FROM lexicons WHERE id = ?", (lexicon_id,))
+        self._conn.execute(
+            "DELETE FROM lexicons WHERE rowid = ?", (row["rowid"],)
+        )
 
     def _row_to_lexicon(self, row: sqlite3.Row) -> LexiconModel:
         meta = row["metadata"]
@@ -382,12 +398,19 @@ class WordnetEditor:
         if lex_rowid is None:
             raise EntityNotFoundError(f"Lexicon not found: {lexicon_id!r}")
 
+        # Resolve canonical bare id (in case a specifier like "awn:1.0"
+        # was passed — the prefix for entity IDs must use "awn", not
+        # "awn:1.0").
+        canonical_id = self._conn.execute(
+            "SELECT id FROM lexicons WHERE rowid = ?", (lex_rowid,)
+        ).fetchone()["id"]
+
         if id is None:
-            id = self._generate_synset_id(lexicon_id, lex_rowid, pos)
+            id = self._generate_synset_id(canonical_id, lex_rowid, pos)
         else:
-            if not id.startswith(f"{lexicon_id}-"):
+            if not id.startswith(f"{canonical_id}-"):
                 raise ValidationError(
-                    f"ID must start with lexicon prefix: {lexicon_id}-"
+                    f"ID must start with lexicon prefix: {canonical_id}-"
                 )
 
         # Check for duplicates
@@ -473,6 +496,8 @@ class WordnetEditor:
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
 
+        synset_rowid = row["rowid"]
+
         if pos is not None:
             if pos not in _VALID_POS:
                 raise ValidationError(f"Invalid POS: {pos!r}")
@@ -480,8 +505,8 @@ class WordnetEditor:
                 self._conn, "synset", synset_id, "pos", row["pos"], pos
             )
             self._conn.execute(
-                "UPDATE synsets SET pos = ? WHERE id = ?",
-                (pos, synset_id),
+                "UPDATE synsets SET pos = ? WHERE rowid = ?",
+                (pos, synset_rowid),
             )
 
         if metadata is not _UNSET:
@@ -490,8 +515,8 @@ class WordnetEditor:
                 str(row["metadata"]), str(metadata),
             )
             self._conn.execute(
-                "UPDATE synsets SET metadata = ? WHERE id = ?",
-                (json.dumps(metadata) if metadata else None, synset_id),
+                "UPDATE synsets SET metadata = ? WHERE rowid = ?",
+                (json.dumps(metadata) if metadata else None, synset_rowid),
             )
 
         return self._build_synset_model(synset_id)
@@ -542,7 +567,7 @@ class WordnetEditor:
             self._conn, "synset", synset_id, {"pos": row["pos"]}
         )
         self._conn.execute(
-            "DELETE FROM synsets WHERE id = ?", (synset_id,)
+            "DELETE FROM synsets WHERE rowid = ?", (synset_rowid,)
         )
 
     def get_synset(self, synset_id: str) -> SynsetModel:
@@ -585,10 +610,11 @@ class WordnetEditor:
         params: list[Any] = []
 
         if lexicon_id is not None:
-            clauses.append(
-                "s.lexicon_rowid = (SELECT rowid FROM lexicons WHERE id = ?)"
-            )
-            params.append(lexicon_id)
+            lex_rowid = _db.get_lexicon_rowid(self._conn, lexicon_id)
+            if lex_rowid is None:
+                return []
+            clauses.append("s.lexicon_rowid = ?")
+            params.append(lex_rowid)
         if pos is not None:
             clauses.append("s.pos = ?")
             params.append(pos)
@@ -752,12 +778,17 @@ class WordnetEditor:
         if lex_rowid is None:
             raise EntityNotFoundError(f"Lexicon not found: {lexicon_id!r}")
 
+        # Resolve canonical bare id for prefix operations
+        canonical_id = self._conn.execute(
+            "SELECT id FROM lexicons WHERE rowid = ?", (lex_rowid,)
+        ).fetchone()["id"]
+
         if id is None:
-            id = self._generate_entry_id(lexicon_id, lemma, pos)
+            id = self._generate_entry_id(canonical_id, lemma, pos)
         else:
-            if not id.startswith(f"{lexicon_id}-"):
+            if not id.startswith(f"{canonical_id}-"):
                 raise ValidationError(
-                    f"ID must start with lexicon prefix: {lexicon_id}-"
+                    f"ID must start with lexicon prefix: {canonical_id}-"
                 )
 
         if _db.get_entry_rowid(self._conn, id) is not None:
@@ -833,6 +864,8 @@ class WordnetEditor:
         if row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
 
+        entry_rowid = row["rowid"]
+
         if pos is not None:
             if pos not in _VALID_POS:
                 raise ValidationError(f"Invalid POS: {pos!r}")
@@ -840,14 +873,14 @@ class WordnetEditor:
                 self._conn, "entry", entry_id, "pos", row["pos"], pos
             )
             self._conn.execute(
-                "UPDATE entries SET pos = ? WHERE id = ?",
-                (pos, entry_id),
+                "UPDATE entries SET pos = ? WHERE rowid = ?",
+                (pos, entry_rowid),
             )
 
         if metadata is not _UNSET:
             self._conn.execute(
-                "UPDATE entries SET metadata = ? WHERE id = ?",
-                (json.dumps(metadata) if metadata else None, entry_id),
+                "UPDATE entries SET metadata = ? WHERE rowid = ?",
+                (json.dumps(metadata) if metadata else None, entry_rowid),
             )
 
         return self._build_entry_model(entry_id)
@@ -891,7 +924,9 @@ class WordnetEditor:
         _hist.record_delete(
             self._conn, "entry", entry_id, {"pos": row["pos"]}
         )
-        self._conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+        self._conn.execute(
+            "DELETE FROM entries WHERE rowid = ?", (entry_rowid,)
+        )
 
     def get_entry(self, entry_id: str) -> EntryModel:
         """Retrieve an entry by its ID.
@@ -931,10 +966,11 @@ class WordnetEditor:
         params: list[Any] = []
 
         if lexicon_id is not None:
-            clauses.append(
-                "e.lexicon_rowid = (SELECT rowid FROM lexicons WHERE id = ?)"
-            )
-            params.append(lexicon_id)
+            lex_rowid = _db.get_lexicon_rowid(self._conn, lexicon_id)
+            if lex_rowid is None:
+                return []
+            clauses.append("e.lexicon_rowid = ?")
+            params.append(lex_rowid)
         if lemma is not None:
             clauses.append(
                 "e.rowid IN (SELECT entry_rowid FROM forms "
@@ -1575,10 +1611,11 @@ class WordnetEditor:
             )
             params.append(synset_id)
         if lexicon_id is not None:
-            clauses.append(
-                "s.lexicon_rowid = (SELECT rowid FROM lexicons WHERE id = ?)"
-            )
-            params.append(lexicon_id)
+            lex_rowid = _db.get_lexicon_rowid(self._conn, lexicon_id)
+            if lex_rowid is None:
+                return []
+            clauses.append("s.lexicon_rowid = ?")
+            params.append(lex_rowid)
 
         where = " AND ".join(clauses) if clauses else "1=1"
         sql = f"SELECT s.id FROM senses s WHERE {where} ORDER BY s.entry_rank"

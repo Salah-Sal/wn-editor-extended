@@ -504,14 +504,21 @@ def _import_lexicon(
     version = lex["version"]
     specifier = f"{lex_id}:{version}"
 
-    # Check for duplicates
+    # Check for duplicates — block same-ID coexistence regardless of version.
+    # The editor API resolves lexicons by bare id; simultaneous versions
+    # would cause silent data corruption in every get/update/delete path.
     existing = conn.execute(
-        "SELECT 1 FROM lexicons WHERE id = ? AND version = ?",
-        (lex_id, version),
+        "SELECT version FROM lexicons WHERE id = ?", (lex_id,)
     ).fetchone()
     if existing:
+        if existing["version"] == version:
+            raise DuplicateEntityError(
+                f"Lexicon {lex_id}:{version} already exists"
+            )
         raise DuplicateEntityError(
-            f"Lexicon {lex_id}:{version} already exists"
+            f"Lexicon {lex_id!r} already exists with version "
+            f"{existing['version']!r}. Remove it before importing "
+            f"version {version!r}."
         )
 
     meta = lex.get("meta")

@@ -57,12 +57,15 @@ def commit_to_wn(
             # Remove existing lexicons from wn
             ids_to_commit = lexicon_ids or _all_lexicon_ids(conn)
             for lex_id in ids_to_commit:
+                lex_rowid = _resolve_lexicon_rowid(conn, lex_id)
+                if lex_rowid is None:
+                    continue
                 row = conn.execute(
-                    "SELECT version FROM lexicons WHERE id = ?",
-                    (lex_id,),
+                    "SELECT id, version FROM lexicons WHERE rowid = ?",
+                    (lex_rowid,),
                 ).fetchone()
                 if row:
-                    spec = f"{lex_id}:{row['version']}"
+                    spec = f"{row['id']}:{row['version']}"
                     for lex in wn.lexicons():
                         if lex.specifier() == spec:
                             wn.remove(spec)
@@ -72,6 +75,14 @@ def commit_to_wn(
     finally:
         if original_path is not None:
             wn.config._dbpath = original_path
+
+
+def _resolve_lexicon_rowid(
+    conn: sqlite3.Connection, lexicon_id: str
+) -> int | None:
+    """Resolve a lexicon ID or specifier to a rowid."""
+    from wordnet_editor import db as _db
+    return _db.get_lexicon_rowid(conn, lexicon_id)
 
 
 def _all_lexicon_ids(conn: sqlite3.Connection) -> list[str]:
@@ -88,11 +99,21 @@ def _build_resource(
 ) -> dict:
     """Build a LexicalResource TypedDict from the editor database."""
     if lexicon_ids:
-        placeholders = ",".join("?" for _ in lexicon_ids)
-        lex_rows = conn.execute(
-            f"SELECT rowid, * FROM lexicons WHERE id IN ({placeholders})",
-            lexicon_ids,
-        ).fetchall()
+        # Resolve each lexicon reference (bare ID or specifier) to rowid,
+        # then fetch rows by rowid for unambiguous selection.
+        rowids: list[int] = []
+        for lid in lexicon_ids:
+            rowid = _resolve_lexicon_rowid(conn, lid)
+            if rowid is not None:
+                rowids.append(rowid)
+        if rowids:
+            placeholders = ",".join("?" for _ in rowids)
+            lex_rows = conn.execute(
+                f"SELECT rowid, * FROM lexicons WHERE rowid IN ({placeholders})",
+                rowids,
+            ).fetchall()
+        else:
+            lex_rows = []
     else:
         lex_rows = conn.execute("SELECT rowid, * FROM lexicons").fetchall()
 

@@ -219,6 +219,11 @@ class LexiconModel:
     logo: str | None
     metadata: dict[str, Any] | None
 
+    @property
+    def specifier(self) -> str:
+        """Return the lexicon specifier (``"id:version"``)."""
+        return f"{self.id}:{self.version}"
+
 
 @dataclass(frozen=True, slots=True)
 class SynsetModel:

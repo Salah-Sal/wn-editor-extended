@@ -442,7 +442,21 @@ def get_or_create_ili(
 # ---------------------------------------------------------------------------
 
 def get_lexicon_rowid(conn: sqlite3.Connection, lexicon_id: str) -> int | None:
-    """Get the rowid for a lexicon by its ID, or None."""
+    """Get the rowid for a lexicon by ID or specifier, or None.
+
+    Accepts a bare ID (``"awn"``) or a specifier (``"awn:1.0"``).
+    Specifier format is tried first for unambiguous matching; bare ID
+    is the fallback.  Because the editor prevents same-ID multi-version
+    coexistence, the bare-ID path will always match at most one row.
+    """
+    # Try specifier first (id:version format, indexed)
+    row = conn.execute(
+        "SELECT rowid FROM lexicons WHERE specifier = ?",
+        (lexicon_id,),
+    ).fetchone()
+    if row:
+        return row[0]
+    # Fall back to bare id
     row = conn.execute(
         "SELECT rowid FROM lexicons WHERE id = ?",
         (lexicon_id,),
@@ -451,7 +465,19 @@ def get_lexicon_rowid(conn: sqlite3.Connection, lexicon_id: str) -> int | None:
 
 
 def get_lexicon_row(conn: sqlite3.Connection, lexicon_id: str) -> sqlite3.Row | None:
-    """Get a full lexicon row by ID."""
+    """Get a full lexicon row by ID or specifier.
+
+    Accepts a bare ID (``"awn"``) or a specifier (``"awn:1.0"``).
+    See :func:`get_lexicon_rowid` for resolution strategy.
+    """
+    # Try specifier first
+    row = conn.execute(
+        "SELECT rowid, * FROM lexicons WHERE specifier = ?",
+        (lexicon_id,),
+    ).fetchone()
+    if row:
+        return row
+    # Fall back to bare id
     return conn.execute(
         "SELECT rowid, * FROM lexicons WHERE id = ?",
         (lexicon_id,),
