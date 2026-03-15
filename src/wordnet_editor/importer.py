@@ -618,19 +618,7 @@ def _import_lexicon(
         for row in conn.execute("SELECT name, rowid FROM lexfiles").fetchall()
     }
 
-    # Prepare bulk synset insert
     synset_params = []
-    proposed_ili_params = []
-    unlex_params = []
-
-    # Store dependent data keyed by synset ID to resolve rowid later
-    proposed_ili_data: dict[str, tuple] = {}
-    unlex_data: set[str] = set()
-
-    # Cache ILI status
-    ili_status_rowid = conn.execute(
-        "SELECT rowid FROM ili_statuses WHERE status = 'presupposed'"
-    ).fetchone()[0]
 
     for syn in lex.get("synsets", []):
         syn_id = syn["id"]
@@ -638,10 +626,9 @@ def _import_lexicon(
 
         ili_rowid = None
         if ili_str and ili_str != "in":
-            # Inline get_or_create_ili with cached status
             conn.execute(
-                "INSERT OR IGNORE INTO ilis (id, status_rowid) VALUES (?, ?)",
-                (ili_str, ili_status_rowid),
+                "INSERT OR IGNORE INTO ilis (id, status) VALUES (?, 'presupposed')",
+                (ili_str,),
             )
             ili_rowid = conn.execute(
                 "SELECT rowid FROM ilis WHERE id = ?",
@@ -653,6 +640,20 @@ def _import_lexicon(
         if lf:
             lexfile_rowid = lexfile_map.get(lf)
 
+        proposed_def = None
+        proposed_meta_json = None
+        if ili_str == "in":
+            ili_def = syn.get("ili_definition", {})
+            if isinstance(ili_def, dict):
+                proposed_def = ili_def.get("text", "")
+                def_meta = ili_def.get("meta")
+            else:
+                proposed_def = str(ili_def)
+                def_meta = None
+            proposed_meta_json = json.dumps(def_meta) if def_meta else None
+
+        lexicalized = 1 if syn.get("lexicalized", True) else 0
+
         syn_meta = syn.get("meta")
         synset_params.append((
             syn_id,
@@ -660,36 +661,21 @@ def _import_lexicon(
             ili_rowid,
             syn.get("partOfSpeech") or None,
             lexfile_rowid,
+            lexicalized,
+            proposed_def,
+            proposed_meta_json,
             json.dumps(syn_meta) if syn_meta else None
         ))
 
-        # Proposed ILI
-        if ili_str == "in":
-            ili_def = syn.get("ili_definition", {})
-            if isinstance(ili_def, dict):
-                def_text = ili_def.get("text", "")
-                def_meta = ili_def.get("meta")
-            else:
-                def_text = str(ili_def)
-                def_meta = None
-            proposed_ili_data[syn_id] = (
-                def_text,
-                json.dumps(def_meta) if def_meta else None
-            )
-
-        # Unlexicalized
-        if not syn.get("lexicalized", True):
-            unlex_data.add(syn_id)
-
-    # Bulk insert synsets
     if synset_params:
         conn.executemany(
-            "INSERT INTO synsets (id, lexicon_rowid, ili_rowid, pos, lexfile_rowid, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO synsets (id, lexicon_rowid, ili_rowid, pos, "
+            "lexfile_rowid, lexicalized, proposed_ili_definition, "
+            "proposed_ili_metadata, metadata) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             synset_params,
         )
 
-        # Recover rowids
         cur = conn.cursor()
         cur.row_factory = None
         synset_id_to_rowid = dict(
@@ -699,33 +685,9 @@ def _import_lexicon(
             ).fetchall()
         )
 
-        # Prepare dependent inserts
-        for syn_id, (def_text, def_meta_json) in proposed_ili_data.items():
-            s_rowid = synset_id_to_rowid.get(syn_id)
-            if s_rowid:
-                proposed_ili_params.append((s_rowid, def_text, def_meta_json))
-
-        for syn_id in unlex_data:
-            s_rowid = synset_id_to_rowid.get(syn_id)
-            if s_rowid:
-                unlex_params.append((s_rowid,))
-
-        if proposed_ili_params:
-            conn.executemany(
-                "INSERT INTO proposed_ilis (synset_rowid, definition, metadata) "
-                "VALUES (?, ?, ?)",
-                proposed_ili_params,
-            )
-
-        if unlex_params:
-            conn.executemany(
-                "INSERT INTO unlexicalized_synsets (synset_rowid) VALUES (?)",
-                unlex_params,
-            )
-
         if record_history:
             # History recording (still sequential as API doesn't support bulk)
-            for syn_id, _, _, _, _, _ in synset_params:
+            for syn_id, *_ in synset_params:
                 _hist.record_create(conn, "synset", syn_id)
 
     # Insert entries and their children
@@ -736,28 +698,17 @@ def _import_lexicon(
         lemma = entry.get("lemma", {})
         pos = lemma.get("partOfSpeech", "")
 
+        entry_lemma = entry.get("index") or lemma.get("writtenForm", "")
         conn.execute(
-            "INSERT INTO entries (id, lexicon_rowid, pos, metadata) "
-            "VALUES (?, ?, ?, ?)",
-            (entry["id"], lex_rowid, pos,
+            "INSERT INTO entries (id, lexicon_rowid, pos, lemma, metadata) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (entry["id"], lex_rowid, pos, entry_lemma,
              json.dumps(entry_meta) if entry_meta else None),
         )
         entry_rowid = conn.execute(
             "SELECT rowid FROM entries WHERE id = ? AND lexicon_rowid = ?",
             (entry["id"], lex_rowid),
         ).fetchone()[0]
-
-        # Entry index
-        if entry.get("index"):
-            conn.execute(
-                "INSERT INTO entry_index (entry_rowid, lemma) VALUES (?, ?)",
-                (entry_rowid, entry["index"]),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO entry_index (entry_rowid, lemma) VALUES (?, ?)",
-                (entry_rowid, lemma.get("writtenForm", "")),
-            )
 
         # Lemma form (rank=0)
         lemma_form = lemma.get("writtenForm", "")
@@ -855,32 +806,21 @@ def _import_lexicon(
 
             # Check members for synset_rank
             sense_meta = sense.get("meta")
+            sense_lexicalized = 1 if sense.get("lexicalized", True) else 0
+            sense_adjposition = sense.get("adjposition", "") or None
+
             conn.execute(
                 "INSERT INTO senses (id, lexicon_rowid, entry_rowid, "
-                "entry_rank, synset_rowid, synset_rank, metadata) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "entry_rank, synset_rowid, synset_rank, "
+                "lexicalized, adjposition, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (sense["id"], lex_rowid, entry_rowid,
                  entry_rank, syn_rowid, synset_rank_val,
+                 sense_lexicalized, sense_adjposition,
                  json.dumps(sense_meta) if sense_meta else None),
             )
             sense_rowid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             sense_id_to_rowid[sense["id"]] = sense_rowid
-
-            # Unlexicalized sense
-            if not sense.get("lexicalized", True):
-                conn.execute(
-                    "INSERT INTO unlexicalized_senses (sense_rowid) VALUES (?)",
-                    (sense_rowid,),
-                )
-
-            # Adjposition
-            adj = sense.get("adjposition", "")
-            if adj:
-                conn.execute(
-                    "INSERT INTO adjpositions (sense_rowid, adjposition) "
-                    "VALUES (?, ?)",
-                    (sense_rowid, adj),
-                )
 
             # Counts
             for c in sense.get("counts", []):

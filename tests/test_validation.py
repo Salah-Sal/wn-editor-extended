@@ -115,14 +115,9 @@ class TestProposedILIMissingDefinition:
     def test_proposed_ili_blank_definition(self, editor_with_lexicon):
         ed = editor_with_lexicon
         ss = ed.create_synset("test", "n", "Some definition")
-        # Insert a proposed ILI with blank definition directly
-        ss_rowid = ed._conn.execute(
-            "SELECT rowid FROM synsets WHERE id = ?", (ss.id,)
-        ).fetchone()[0]
         ed._conn.execute(
-            "INSERT INTO proposed_ilis (synset_rowid, definition) "
-            "VALUES (?, '')",
-            (ss_rowid,),
+            "UPDATE synsets SET proposed_ili_definition = '' WHERE id = ?",
+            (ss.id,),
         )
         results = ed.validate()
         assert any(r.rule_id == "VAL-SYN-003" for r in results)
@@ -135,14 +130,10 @@ class TestSpuriousILIDefinition:
         ed = editor_with_lexicon
         ss = ed.create_synset("test", "n", "Some definition")
         ed.link_ili(ss.id, "i12345")
-        # Sneak a proposed_ilis row despite having a real ILI
-        ss_rowid = ed._conn.execute(
-            "SELECT rowid FROM synsets WHERE id = ?", (ss.id,)
-        ).fetchone()[0]
         ed._conn.execute(
-            "INSERT INTO proposed_ilis (synset_rowid, definition) "
-            "VALUES (?, 'should not be here at all')",
-            (ss_rowid,),
+            "UPDATE synsets SET proposed_ili_definition = 'should not be here at all' "
+            "WHERE id = ?",
+            (ss.id,),
         )
         results = ed.validate()
         assert any(r.rule_id == "VAL-SYN-004" for r in results)
@@ -327,14 +318,9 @@ class TestShortProposedILIDefinition:
     def test_proposed_ili_short_definition(self, editor_with_lexicon):
         ed = editor_with_lexicon
         ss = ed.create_synset("test", "n", "Some definition")
-        # Insert a proposed ILI with short definition directly
-        ss_rowid = ed._conn.execute(
-            "SELECT rowid FROM synsets WHERE id = ?", (ss.id,)
-        ).fetchone()[0]
         ed._conn.execute(
-            "INSERT INTO proposed_ilis (synset_rowid, definition) "
-            "VALUES (?, 'Too short')",
-            (ss_rowid,),
+            "UPDATE synsets SET proposed_ili_definition = 'Too short' WHERE id = ?",
+            (ss.id,),
         )
         results = ed.validate()
         assert any(r.rule_id == "VAL-SYN-008" for r in results)

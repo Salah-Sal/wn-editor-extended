@@ -23,7 +23,7 @@ class TestInit:
             row = editor._conn.execute(
                 "SELECT value FROM meta WHERE key='schema_version'"
             ).fetchone()
-            assert row[0] == "1.0"
+            assert row[0] == "2.0"
             editor.close()
         finally:
             if os.path.exists(path):
@@ -35,7 +35,7 @@ class TestInit:
         row = editor._conn.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
         ).fetchone()
-        assert row[0] == "1.0"
+        assert row[0] == "2.0"
         editor.close()
 
     def test_context_manager(self):

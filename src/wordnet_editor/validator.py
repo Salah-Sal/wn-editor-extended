@@ -60,12 +60,11 @@ def validate_synset(
     if row is None:
         return results
 
-    # Check unlexicalized (VAL-SYN-001)
-    unlex = conn.execute(
-        "SELECT 1 FROM unlexicalized_synsets WHERE synset_rowid = ?",
+    synset_detail = conn.execute(
+        "SELECT lexicalized FROM synsets WHERE rowid = ?",
         (row["rowid"],),
     ).fetchone()
-    if unlex is not None:
+    if synset_detail and not synset_detail["lexicalized"]:
         results.append(ValidationResult(
             rule_id="VAL-SYN-001",
             severity="WARNING",
@@ -353,9 +352,8 @@ def _val_syn_001(
     results = []
     filt, params = _lex_filter(lexicon_id, conn)
     sql = (
-        "SELECT s.id FROM synsets s "
-        "JOIN unlexicalized_synsets u ON u.synset_rowid = s.rowid"
-        f" WHERE 1=1 {filt.replace('lexicon_rowid', 's.lexicon_rowid')}"
+        "SELECT s.id FROM synsets s"
+        f" WHERE s.lexicalized = 0 {filt.replace('lexicon_rowid', 's.lexicon_rowid')}"
     )
     for row in conn.execute(sql, params).fetchall():
         results.append(ValidationResult(
@@ -450,9 +448,9 @@ def _val_syn_008(
     results = []
     filt, params = _lex_filter(lexicon_id, conn)
     sql = (
-        "SELECT s.id, p.definition FROM proposed_ilis p "
-        "JOIN synsets s ON p.synset_rowid = s.rowid "
-        f"WHERE LENGTH(p.definition) < 20"
+        "SELECT s.id, s.proposed_ili_definition as definition FROM synsets s "
+        f"WHERE s.proposed_ili_definition IS NOT NULL "
+        f"AND LENGTH(s.proposed_ili_definition) < 20"
         f" {filt.replace('lexicon_rowid', 's.lexicon_rowid')}"
     )
     for row in conn.execute(sql, params).fetchall():
@@ -717,13 +715,13 @@ def _val_edt_003(
 def _val_syn_003(
     conn: sqlite3.Connection, lexicon_id: str | None
 ) -> list[ValidationResult]:
-    """Proposed ILI (ili='in') missing definition in proposed_ilis."""
+    """Proposed ILI (ili='in') missing definition."""
     results = []
     filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id FROM synsets s "
-        "JOIN proposed_ilis p ON p.synset_rowid = s.rowid "
-        f"WHERE (p.definition IS NULL OR TRIM(p.definition) = '')"
+        f"WHERE s.proposed_ili_definition IS NOT NULL "
+        f"AND TRIM(s.proposed_ili_definition) = ''"
         f" {filt.replace('lexicon_rowid', 's.lexicon_rowid')}"
     )
     for row in conn.execute(sql, params).fetchall():
@@ -746,8 +744,8 @@ def _val_syn_004(
     filt, params = _lex_filter(lexicon_id, conn)
     sql = (
         "SELECT s.id FROM synsets s "
-        "JOIN proposed_ilis p ON p.synset_rowid = s.rowid "
-        f"WHERE s.ili_rowid IS NOT NULL"
+        f"WHERE s.proposed_ili_definition IS NOT NULL "
+        f"AND s.ili_rowid IS NOT NULL"
         f" {filt.replace('lexicon_rowid', 's.lexicon_rowid')}"
     )
     for row in conn.execute(sql, params).fetchall():

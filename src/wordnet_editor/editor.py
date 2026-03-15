@@ -431,30 +431,21 @@ class WordnetEditor:
                     "ILI definition must be at least 20 characters"
                 )
 
+        proposed_def = ili_definition if ili == "in" else None
+
         self._conn.execute(
-            "INSERT INTO synsets (id, lexicon_rowid, ili_rowid, pos, metadata) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO synsets "
+            "(id, lexicon_rowid, ili_rowid, pos, lexicalized, "
+            "proposed_ili_definition, metadata) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (id, lex_rowid, ili_rowid, pos,
+             1 if lexicalized else 0,
+             proposed_def,
              json.dumps(metadata) if metadata else None),
         )
         synset_rowid = self._conn.execute(
             "SELECT rowid FROM synsets WHERE id = ?", (id,)
         ).fetchone()[0]
-
-        # Insert proposed ILI
-        if ili == "in":
-            self._conn.execute(
-                "INSERT INTO proposed_ilis (synset_rowid, definition) "
-                "VALUES (?, ?)",
-                (synset_rowid, ili_definition),
-            )
-
-        # Handle unlexicalized
-        if not lexicalized:
-            self._conn.execute(
-                "INSERT INTO unlexicalized_synsets (synset_rowid) VALUES (?)",
-                (synset_rowid,),
-            )
 
         # Insert definition
         self._conn.execute(
@@ -638,6 +629,7 @@ class WordnetEditor:
     def _build_synset_model(self, synset_id: str) -> SynsetModel:
         row = self._conn.execute(
             "SELECT s.rowid, s.id, s.pos, s.ili_rowid, s.lexfile_rowid, "
+            "s.lexicalized, s.proposed_ili_definition, "
             "s.metadata, l.id as lexicon_id "
             "FROM synsets s JOIN lexicons l ON s.lexicon_rowid = l.rowid "
             "WHERE s.id = ?",
@@ -646,7 +638,6 @@ class WordnetEditor:
         if row is None:
             raise EntityNotFoundError(f"Synset not found: {synset_id!r}")
 
-        # Resolve ILI
         ili_str: str | None = None
         if row["ili_rowid"] is not None:
             ili_row = self._conn.execute(
@@ -655,15 +646,9 @@ class WordnetEditor:
             ).fetchone()
             if ili_row:
                 ili_str = ili_row["id"]
-        # Check for proposed ILI
-        proposed = self._conn.execute(
-            "SELECT rowid FROM proposed_ilis WHERE synset_rowid = ?",
-            (row["rowid"],),
-        ).fetchone()
-        if proposed is not None:
+        if row["proposed_ili_definition"] is not None:
             ili_str = "in"
 
-        # Resolve lexfile
         lexfile: str | None = None
         if row["lexfile_rowid"] is not None:
             lf_row = self._conn.execute(
@@ -672,12 +657,6 @@ class WordnetEditor:
             ).fetchone()
             if lf_row:
                 lexfile = lf_row["name"]
-
-        # Check lexicalized
-        unlex = self._conn.execute(
-            "SELECT 1 FROM unlexicalized_synsets WHERE synset_rowid = ?",
-            (row["rowid"],),
-        ).fetchone()
 
         meta = row["metadata"]
         if isinstance(meta, str):
@@ -688,7 +667,7 @@ class WordnetEditor:
             lexicon_id=row["lexicon_id"],
             pos=row["pos"],
             ili=ili_str,
-            lexicalized=unlex is None,
+            lexicalized=bool(row["lexicalized"]),
             lexfile=lexfile,
             metadata=meta,
         )
@@ -795,28 +774,21 @@ class WordnetEditor:
             raise DuplicateEntityError(f"Entry already exists: {id!r}")
 
         self._conn.execute(
-            "INSERT INTO entries (id, lexicon_rowid, pos, metadata) "
-            "VALUES (?, ?, ?, ?)",
-            (id, lex_rowid, pos,
+            "INSERT INTO entries (id, lexicon_rowid, pos, lemma, metadata) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (id, lex_rowid, pos, lemma,
              json.dumps(metadata) if metadata else None),
         )
         entry_rowid = self._conn.execute(
             "SELECT rowid FROM entries WHERE id = ?", (id,)
         ).fetchone()[0]
 
-        # Insert lemma as rank-0 form
         normalized = lemma.casefold() if lemma.casefold() != lemma else None
         self._conn.execute(
             "INSERT INTO forms "
             "(lexicon_rowid, entry_rowid, form, normalized_form, rank) "
             "VALUES (?, ?, ?, ?, 0)",
             (lex_rowid, entry_rowid, lemma, normalized),
-        )
-
-        # Insert entry_index
-        self._conn.execute(
-            "INSERT INTO entry_index (entry_rowid, lemma) VALUES (?, ?)",
-            (entry_rowid, lemma),
         )
 
         # Insert additional forms
@@ -1189,7 +1161,7 @@ class WordnetEditor:
             (new_lemma, normalized, entry_rowid),
         )
         self._conn.execute(
-            "UPDATE entry_index SET lemma = ? WHERE entry_rowid = ?",
+            "UPDATE entries SET lemma = ? WHERE rowid = ?",
             (new_lemma, entry_rowid),
         )
         _hist.record_update(
@@ -1198,7 +1170,7 @@ class WordnetEditor:
 
     def _build_entry_model(self, entry_id: str) -> EntryModel:
         row = self._conn.execute(
-            "SELECT e.rowid, e.id, e.pos, e.metadata, l.id as lexicon_id "
+            "SELECT e.rowid, e.id, e.pos, e.lemma, e.metadata, l.id as lexicon_id "
             "FROM entries e JOIN lexicons l ON e.lexicon_rowid = l.rowid "
             "WHERE e.id = ?",
             (entry_id,),
@@ -1206,18 +1178,11 @@ class WordnetEditor:
         if row is None:
             raise EntityNotFoundError(f"Entry not found: {entry_id!r}")
 
-        # Get lemma
         lemma_row = self._conn.execute(
             "SELECT form FROM forms WHERE entry_rowid = ? AND rank = 0",
             (row["rowid"],),
         ).fetchone()
         lemma = lemma_row["form"] if lemma_row else ""
-
-        # Get index
-        idx_row = self._conn.execute(
-            "SELECT lemma FROM entry_index WHERE entry_rowid = ?",
-            (row["rowid"],),
-        ).fetchone()
 
         meta = row["metadata"]
         if isinstance(meta, str):
@@ -1228,7 +1193,7 @@ class WordnetEditor:
             lexicon_id=row["lexicon_id"],
             lemma=lemma,
             pos=row["pos"],
-            index=idx_row["lemma"] if idx_row else None,
+            index=row["lemma"] if row["lemma"] else None,
             metadata=meta,
         )
 
@@ -1365,33 +1330,17 @@ class WordnetEditor:
         self._conn.execute(
             "INSERT INTO senses "
             "(id, lexicon_rowid, entry_rowid, entry_rank, "
-            "synset_rowid, synset_rank, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "synset_rowid, synset_rank, lexicalized, adjposition, metadata) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (id, lex_rowid, entry_rowid, entry_rank,
              synset_rowid, synset_rank,
+             1 if lexicalized else 0,
+             adjposition,
              json.dumps(metadata) if metadata else None),
         )
 
-        sense_rowid = self._conn.execute(
-            "SELECT rowid FROM senses WHERE id = ?", (id,)
-        ).fetchone()[0]
-
-        if not lexicalized:
-            self._conn.execute(
-                "INSERT INTO unlexicalized_senses (sense_rowid) VALUES (?)",
-                (sense_rowid,),
-            )
-
-        if adjposition is not None:
-            self._conn.execute(
-                "INSERT INTO adjpositions (sense_rowid, adjposition) "
-                "VALUES (?, ?)",
-                (sense_rowid, adjposition),
-            )
-
-        # RULE-EMPTY-002: if synset was unlexicalized, make it lexicalized
         self._conn.execute(
-            "DELETE FROM unlexicalized_synsets WHERE synset_rowid = ?",
+            "UPDATE synsets SET lexicalized = 1 WHERE rowid = ?",
             (synset_rowid,),
         )
 
@@ -1436,18 +1385,15 @@ class WordnetEditor:
 
         _hist.record_delete(self._conn, "sense", sense_id)
 
-        # Delete the sense (CASCADE handles examples, counts, adjpositions, etc.)
         self._conn.execute("DELETE FROM senses WHERE id = ?", (sense_id,))
 
-        # RULE-EMPTY-001: check if synset now has zero senses
         remaining = self._conn.execute(
             "SELECT COUNT(*) FROM senses WHERE synset_rowid = ?",
             (synset_rowid,),
         ).fetchone()[0]
         if remaining == 0:
             self._conn.execute(
-                "INSERT OR IGNORE INTO unlexicalized_synsets (synset_rowid) "
-                "VALUES (?)",
+                "UPDATE synsets SET lexicalized = 0 WHERE rowid = ?",
                 (synset_rowid,),
             )
 
@@ -1500,21 +1446,18 @@ class WordnetEditor:
             (target_synset_rowid, sense_id),
         )
 
-        # RULE-EMPTY-002: remove target from unlexicalized
         self._conn.execute(
-            "DELETE FROM unlexicalized_synsets WHERE synset_rowid = ?",
+            "UPDATE synsets SET lexicalized = 1 WHERE rowid = ?",
             (target_synset_rowid,),
         )
 
-        # RULE-MOVE-003: check if source synset is now empty
         remaining = self._conn.execute(
             "SELECT COUNT(*) FROM senses WHERE synset_rowid = ?",
             (source_synset_rowid,),
         ).fetchone()[0]
         if remaining == 0:
             self._conn.execute(
-                "INSERT OR IGNORE INTO unlexicalized_synsets (synset_rowid) "
-                "VALUES (?)",
+                "UPDATE synsets SET lexicalized = 0 WHERE rowid = ?",
                 (source_synset_rowid,),
             )
 
@@ -1624,7 +1567,8 @@ class WordnetEditor:
 
     def _build_sense_model(self, sense_id: str) -> SenseModel:
         row = self._conn.execute(
-            "SELECT s.rowid, s.id, s.entry_rank, s.synset_rank, s.metadata, "
+            "SELECT s.rowid, s.id, s.entry_rank, s.synset_rank, "
+            "s.lexicalized, s.adjposition, s.metadata, "
             "e.id as entry_id, syn.id as synset_id, l.id as lexicon_id "
             "FROM senses s "
             "JOIN entries e ON s.entry_rowid = e.rowid "
@@ -1635,18 +1579,6 @@ class WordnetEditor:
         ).fetchone()
         if row is None:
             raise EntityNotFoundError(f"Sense not found: {sense_id!r}")
-
-        # Check lexicalized
-        unlex = self._conn.execute(
-            "SELECT 1 FROM unlexicalized_senses WHERE sense_rowid = ?",
-            (row["rowid"],),
-        ).fetchone()
-
-        # Get adjposition
-        adj_row = self._conn.execute(
-            "SELECT adjposition FROM adjpositions WHERE sense_rowid = ?",
-            (row["rowid"],),
-        ).fetchone()
 
         meta = row["metadata"]
         if isinstance(meta, str):
@@ -1659,8 +1591,8 @@ class WordnetEditor:
             lexicon_id=row["lexicon_id"],
             entry_rank=row["entry_rank"],
             synset_rank=row["synset_rank"],
-            lexicalized=unlex is None,
-            adjposition=adj_row["adjposition"] if adj_row else None,
+            lexicalized=bool(row["lexicalized"]),
+            adjposition=row["adjposition"],
             metadata=meta,
         )
 
@@ -2579,12 +2511,7 @@ class WordnetEditor:
             raise ValidationError(
                 f"Synset {synset_id} already has an ILI mapping"
             )
-        # Also check proposed ILI
-        proposed = self._conn.execute(
-            "SELECT 1 FROM proposed_ilis WHERE synset_rowid = ?",
-            (row["rowid"],),
-        ).fetchone()
-        if proposed is not None:
+        if row["proposed_ili_definition"] is not None:
             raise ValidationError(
                 f"Synset {synset_id} already has a proposed ILI"
             )
@@ -2617,13 +2544,10 @@ class WordnetEditor:
             str(row["ili_rowid"]), None,
         )
         self._conn.execute(
-            "UPDATE synsets SET ili_rowid = NULL WHERE id = ?",
+            "UPDATE synsets SET ili_rowid = NULL, "
+            "proposed_ili_definition = NULL, proposed_ili_metadata = NULL "
+            "WHERE id = ?",
             (synset_id,),
-        )
-        # Also remove proposed ILI if any
-        self._conn.execute(
-            "DELETE FROM proposed_ilis WHERE synset_rowid = ?",
-            (row["rowid"],),
         )
 
     @_modifies_db
@@ -2660,21 +2584,17 @@ class WordnetEditor:
                 "ILI definition must be at least 20 characters"
             )
 
-        # Check for existing proposed ILI
-        existing = self._conn.execute(
-            "SELECT 1 FROM proposed_ilis WHERE synset_rowid = ?",
-            (row["rowid"],),
-        ).fetchone()
-        if existing is not None:
+        if row["proposed_ili_definition"] is not None:
             raise ValidationError(
                 f"Synset {synset_id} already has a proposed ILI"
             )
 
         self._conn.execute(
-            "INSERT INTO proposed_ilis (synset_rowid, definition, metadata) "
-            "VALUES (?, ?, ?)",
-            (row["rowid"], definition,
-             json.dumps(metadata) if metadata else None),
+            "UPDATE synsets SET proposed_ili_definition = ?, "
+            "proposed_ili_metadata = ? WHERE rowid = ?",
+            (definition,
+             json.dumps(metadata) if metadata else None,
+             row["rowid"]),
         )
         _hist.record_create(
             self._conn, "ili", synset_id,
@@ -2699,9 +2619,8 @@ class WordnetEditor:
 
         if row["ili_rowid"] is not None:
             ili_row = self._conn.execute(
-                "SELECT i.id, i.definition, i.metadata, s.status "
-                "FROM ilis i JOIN ili_statuses s ON i.status_rowid = s.rowid "
-                "WHERE i.rowid = ?",
+                "SELECT id, status, definition, metadata FROM ilis "
+                "WHERE rowid = ?",
                 (row["ili_rowid"],),
             ).fetchone()
             if ili_row:
@@ -2871,9 +2790,8 @@ class WordnetEditor:
         self._merge_definitions(src_rowid, tgt_rowid)
         self._merge_examples(src_rowid, tgt_rowid)
 
-        # Remove target from unlexicalized
         self._conn.execute(
-            "DELETE FROM unlexicalized_synsets WHERE synset_rowid = ?",
+            "UPDATE synsets SET lexicalized = 1 WHERE rowid = ?",
             (tgt_rowid,),
         )
 
@@ -2896,19 +2814,12 @@ class WordnetEditor:
 
         src_has_ili = src["ili_rowid"] is not None
         tgt_has_ili = tgt["ili_rowid"] is not None
-        src_has_proposed = self._conn.execute(
-            "SELECT 1 FROM proposed_ilis WHERE synset_rowid = ?",
-            (src_rowid,),
-        ).fetchone() is not None
-        tgt_has_proposed = self._conn.execute(
-            "SELECT 1 FROM proposed_ilis WHERE synset_rowid = ?",
-            (tgt_rowid,),
-        ).fetchone() is not None
+        src_has_proposed = src["proposed_ili_definition"] is not None
+        tgt_has_proposed = tgt["proposed_ili_definition"] is not None
 
         if (src_has_ili or src_has_proposed) and (tgt_has_ili or tgt_has_proposed):
             raise ConflictError("Both synsets have ILI mappings")
 
-        # Transfer ILI if source has it and target doesn't
         if src_has_ili and not tgt_has_ili:
             self._conn.execute(
                 "UPDATE synsets SET ili_rowid = ? WHERE rowid = ?",
@@ -2916,9 +2827,10 @@ class WordnetEditor:
             )
         if src_has_proposed and not tgt_has_proposed:
             self._conn.execute(
-                "UPDATE proposed_ilis SET synset_rowid = ? "
-                "WHERE synset_rowid = ?",
-                (tgt_rowid, src_rowid),
+                "UPDATE synsets SET proposed_ili_definition = ?, "
+                "proposed_ili_metadata = ? WHERE rowid = ?",
+                (src["proposed_ili_definition"],
+                 src["proposed_ili_metadata"], tgt_rowid),
             )
 
     def _merge_senses(self, src_rowid: int, tgt_rowid: int) -> None:

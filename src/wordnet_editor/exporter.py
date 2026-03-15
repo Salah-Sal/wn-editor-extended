@@ -235,25 +235,6 @@ def _build_lexicon_synsets(conn: sqlite3.Connection, lex_rowid: int) -> list[dic
     ).fetchall():
         relations_map[row["source_rowid"]].append(row)
 
-    proposed_ili_map = {}
-    for row in conn.execute(
-        "SELECT p.synset_rowid, p.definition, p.metadata "
-        "FROM proposed_ilis p "
-        "JOIN synsets s ON p.synset_rowid = s.rowid "
-        "WHERE s.lexicon_rowid = ?",
-        (lex_rowid,),
-    ).fetchall():
-        proposed_ili_map[row["synset_rowid"]] = row
-
-    unlexicalized_set = set()
-    for row in conn.execute(
-        "SELECT u.synset_rowid "
-        "FROM unlexicalized_synsets u "
-        "JOIN synsets s ON u.synset_rowid = s.rowid "
-        "WHERE s.lexicon_rowid = ?",
-        (lex_rowid,),
-    ).fetchall():
-        unlexicalized_set.add(row["synset_rowid"])
 
     members_map = defaultdict(list)
     for row in conn.execute(
@@ -268,8 +249,9 @@ def _build_lexicon_synsets(conn: sqlite3.Connection, lex_rowid: int) -> list[dic
 
     # Synsets
     synset_rows = conn.execute(
-        "SELECT s.rowid, s.id, s.pos, s.metadata, i.id as ili_id, "
-        "lf.name as lexfile_name "
+        "SELECT s.rowid, s.id, s.pos, s.metadata, s.lexicalized, "
+        "s.proposed_ili_definition, s.proposed_ili_metadata, "
+        "i.id as ili_id, lf.name as lexfile_name "
         "FROM synsets s "
         "LEFT JOIN ilis i ON s.ili_rowid = i.rowid "
         "LEFT JOIN lexfiles lf ON s.lexfile_rowid = lf.rowid "
@@ -285,8 +267,6 @@ def _build_lexicon_synsets(conn: sqlite3.Connection, lex_rowid: int) -> list[dic
                 definitions=definitions_map[sr["rowid"]],
                 examples=examples_map[sr["rowid"]],
                 relations=relations_map[sr["rowid"]],
-                proposed=proposed_ili_map.get(sr["rowid"]),
-                unlexicalized=sr["rowid"] in unlexicalized_set,
                 members=members_map[sr["rowid"]],
             )
         )
@@ -373,12 +353,6 @@ def _build_entry(
     for sr in sense_rows:
         senses_list.append(_build_sense(conn, sr))
 
-    # Entry index
-    idx_row = conn.execute(
-        "SELECT lemma FROM entry_index WHERE entry_rowid = ?",
-        (entry_rowid,),
-    ).fetchone()
-
     entry: dict[str, Any] = {
         "id": er["id"],
         "lemma": lemma_dict,
@@ -386,8 +360,8 @@ def _build_entry(
         "senses": senses_list,
         "meta": meta,
     }
-    if idx_row:
-        entry["index"] = idx_row["lemma"]
+    if er["lemma"]:
+        entry["index"] = er["lemma"]
 
     return entry
 
@@ -478,18 +452,6 @@ def _build_sense(
             c_meta = json.loads(c_meta)
         counts.append({"value": c["count"], "meta": c_meta})
 
-    # Adjposition
-    adj_row = conn.execute(
-        "SELECT adjposition FROM adjpositions WHERE sense_rowid = ?",
-        (sense_rowid,),
-    ).fetchone()
-
-    # Unlexicalized
-    unlex = conn.execute(
-        "SELECT 1 FROM unlexicalized_senses WHERE sense_rowid = ?",
-        (sense_rowid,),
-    ).fetchone()
-
     # Subcat
     subcat = [
         sb["id"]
@@ -505,8 +467,8 @@ def _build_sense(
         "id": sr["id"],
         "synset": synset_id,
         "n": sr["entry_rank"] or 0,
-        "lexicalized": unlex is None,
-        "adjposition": adj_row["adjposition"] if adj_row else "",
+        "lexicalized": bool(sr["lexicalized"]) if sr["lexicalized"] is not None else True,
+        "adjposition": sr["adjposition"] or "",
         "meta": meta,
         "relations": relations,
         "examples": examples,
@@ -521,8 +483,6 @@ def _build_synset(
     definitions: list[sqlite3.Row],
     examples: list[sqlite3.Row],
     relations: list[sqlite3.Row],
-    proposed: sqlite3.Row | None,
-    unlexicalized: bool,
     members: list[str],
 ) -> dict:
     """Build a Synset TypedDict."""
@@ -530,9 +490,9 @@ def _build_synset(
     if isinstance(meta, str):
         meta = json.loads(meta)
 
-    # ILI
+    proposed_def = sr["proposed_ili_definition"]
     ili_str = sr["ili_id"] or ""
-    if proposed:
+    if proposed_def is not None:
         ili_str = "in"
 
     # Lexfile
@@ -580,7 +540,7 @@ def _build_synset(
         "id": sr["id"],
         "partOfSpeech": sr["pos"] or "",
         "ili": ili_str,
-        "lexicalized": not unlexicalized,
+        "lexicalized": bool(sr["lexicalized"]),
         "lexfile": lexfile,
         "meta": meta,
         "definitions": defs,
@@ -589,12 +549,12 @@ def _build_synset(
         "members": members,
     }
 
-    if proposed:
-        p_meta = proposed["metadata"]
+    if proposed_def is not None:
+        p_meta = sr["proposed_ili_metadata"]
         if isinstance(p_meta, str):
             p_meta = json.loads(p_meta)
         synset["ili_definition"] = {
-            "text": proposed["definition"] or "",
+            "text": proposed_def or "",
             "meta": p_meta,
         }
 

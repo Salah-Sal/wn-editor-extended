@@ -8,7 +8,7 @@ from pathlib import Path
 
 from wordnet_editor.exceptions import DatabaseError
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 
 # ---------------------------------------------------------------------------
 # META type adapter/converter (matches wn's pattern)
@@ -46,41 +46,23 @@ CREATE TABLE IF NOT EXISTS relation_types (
     type TEXT NOT NULL,
     UNIQUE (type)
 );
-CREATE INDEX IF NOT EXISTS relation_type_index ON relation_types (type);
-
-CREATE TABLE IF NOT EXISTS ili_statuses (
-    rowid INTEGER PRIMARY KEY,
-    status TEXT NOT NULL,
-    UNIQUE (status)
-);
-CREATE INDEX IF NOT EXISTS ili_status_index ON ili_statuses (status);
 
 CREATE TABLE IF NOT EXISTS lexfiles (
     rowid INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     UNIQUE (name)
 );
-CREATE INDEX IF NOT EXISTS lexfile_index ON lexfiles (name);
 
--- ILI tables
+-- ILI table
 CREATE TABLE IF NOT EXISTS ilis (
     rowid INTEGER PRIMARY KEY,
     id TEXT NOT NULL,
-    status_rowid INTEGER NOT NULL REFERENCES ili_statuses (rowid),
+    status TEXT NOT NULL DEFAULT 'presupposed'
+        CHECK( status IN ('active', 'presupposed', 'deprecated') ),
     definition TEXT,
     metadata META,
     UNIQUE (id)
 );
-CREATE INDEX IF NOT EXISTS ili_id_index ON ilis (id);
-
-CREATE TABLE IF NOT EXISTS proposed_ilis (
-    rowid INTEGER PRIMARY KEY,
-    synset_rowid INTEGER REFERENCES synsets (rowid) ON DELETE CASCADE,
-    definition TEXT,
-    metadata META,
-    UNIQUE (synset_rowid)
-);
-CREATE INDEX IF NOT EXISTS proposed_ili_synset_rowid_index ON proposed_ilis (synset_rowid);
 
 -- Lexicon tables
 CREATE TABLE IF NOT EXISTS lexicons (
@@ -127,18 +109,12 @@ CREATE TABLE IF NOT EXISTS entries (
     id TEXT NOT NULL,
     lexicon_rowid INTEGER NOT NULL REFERENCES lexicons (rowid) ON DELETE CASCADE,
     pos TEXT NOT NULL,
+    lemma TEXT NOT NULL DEFAULT '',
     metadata META,
     UNIQUE (id, lexicon_rowid)
 );
 CREATE INDEX IF NOT EXISTS entry_id_index ON entries (id);
-
-CREATE TABLE IF NOT EXISTS entry_index (
-    entry_rowid INTEGER NOT NULL REFERENCES entries (rowid) ON DELETE CASCADE,
-    lemma TEXT NOT NULL,
-    UNIQUE (entry_rowid)
-);
-CREATE INDEX IF NOT EXISTS entry_index_entry_index ON entry_index(entry_rowid);
-CREATE INDEX IF NOT EXISTS entry_index_lemma_index ON entry_index(lemma);
+CREATE INDEX IF NOT EXISTS entry_lemma_index ON entries (lemma);
 
 CREATE TABLE IF NOT EXISTS forms (
     rowid INTEGER PRIMARY KEY,
@@ -182,16 +158,14 @@ CREATE TABLE IF NOT EXISTS synsets (
     ili_rowid INTEGER REFERENCES ilis (rowid),
     pos TEXT,
     lexfile_rowid INTEGER REFERENCES lexfiles (rowid),
+    lexicalized BOOLEAN NOT NULL DEFAULT 1,
+    proposed_ili_definition TEXT,
+    proposed_ili_metadata META,
     metadata META,
     UNIQUE (id, lexicon_rowid)
 );
 CREATE INDEX IF NOT EXISTS synset_id_index ON synsets (id);
 CREATE INDEX IF NOT EXISTS synset_ili_rowid_index ON synsets (ili_rowid);
-
-CREATE TABLE IF NOT EXISTS unlexicalized_synsets (
-    synset_rowid INTEGER NOT NULL REFERENCES synsets (rowid) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS unlexicalized_synsets_index ON unlexicalized_synsets (synset_rowid);
 
 CREATE TABLE IF NOT EXISTS synset_relations (
     rowid INTEGER PRIMARY KEY,
@@ -236,16 +210,14 @@ CREATE TABLE IF NOT EXISTS senses (
     entry_rank INTEGER DEFAULT 1,
     synset_rowid INTEGER NOT NULL REFERENCES synsets(rowid) ON DELETE CASCADE,
     synset_rank INTEGER DEFAULT 1,
-    metadata META
+    lexicalized BOOLEAN NOT NULL DEFAULT 1,
+    adjposition TEXT,
+    metadata META,
+    UNIQUE (id, lexicon_rowid)
 );
 CREATE INDEX IF NOT EXISTS sense_id_index ON senses(id);
 CREATE INDEX IF NOT EXISTS sense_entry_rowid_index ON senses (entry_rowid);
 CREATE INDEX IF NOT EXISTS sense_synset_rowid_index ON senses (synset_rowid);
-
-CREATE TABLE IF NOT EXISTS unlexicalized_senses (
-    sense_rowid INTEGER NOT NULL REFERENCES senses (rowid) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS unlexicalized_senses_index ON unlexicalized_senses (sense_rowid);
 
 CREATE TABLE IF NOT EXISTS sense_relations (
     rowid INTEGER PRIMARY KEY,
@@ -270,12 +242,6 @@ CREATE TABLE IF NOT EXISTS sense_synset_relations (
 );
 CREATE INDEX IF NOT EXISTS sense_synset_relation_source_index ON sense_synset_relations (source_rowid);
 CREATE INDEX IF NOT EXISTS sense_synset_relation_target_index ON sense_synset_relations (target_rowid);
-
-CREATE TABLE IF NOT EXISTS adjpositions (
-    sense_rowid INTEGER NOT NULL REFERENCES senses(rowid) ON DELETE CASCADE,
-    adjposition TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS adjposition_sense_index ON adjpositions (sense_rowid);
 
 CREATE TABLE IF NOT EXISTS sense_examples (
     rowid INTEGER PRIMARY KEY,
@@ -325,7 +291,8 @@ CREATE TABLE IF NOT EXISTS edit_history (
     operation TEXT NOT NULL CHECK( operation IN ('CREATE', 'UPDATE', 'DELETE') ),
     old_value TEXT,
     new_value TEXT,
-    timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now'))
+    timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now')),
+    session_id TEXT
 );
 CREATE INDEX IF NOT EXISTS edit_history_entity_index ON edit_history (entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS edit_history_timestamp_index ON edit_history (timestamp);
@@ -340,6 +307,7 @@ def connect(db_path: str | Path = ":memory:") -> sqlite3.Connection:
         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
     )
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
     if db_path_str != ":memory:":
         conn.execute("PRAGMA journal_mode = WAL")
     conn.row_factory = sqlite3.Row
@@ -349,7 +317,6 @@ def connect(db_path: str | Path = ":memory:") -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> None:
     """Initialize all tables if they don't exist. Set schema version."""
     conn.executescript(_DDL)
-    # Insert schema version if not present
     conn.execute(
         "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
         (SCHEMA_VERSION,),
@@ -358,12 +325,6 @@ def init_db(conn: sqlite3.Connection) -> None:
         "INSERT OR IGNORE INTO meta (key, value) "
         "VALUES ('created_at', strftime('%Y-%m-%dT%H:%M:%f', 'now'))",
     )
-    # Seed ili_statuses
-    for status in ("active", "presupposed", "deprecated"):
-        conn.execute(
-            "INSERT OR IGNORE INTO ili_statuses (status) VALUES (?)",
-            (status,),
-        )
     conn.commit()
 
 
@@ -374,7 +335,6 @@ def check_schema_version(conn: sqlite3.Connection) -> None:
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
     except sqlite3.OperationalError:
-        # meta table doesn't exist - uninitialized DB
         return
     if row is None:
         return
@@ -422,13 +382,9 @@ def get_or_create_ili(
     status: str = "presupposed",
 ) -> int:
     """Get or create an ILI entry, returning its rowid."""
-    status_rowid = conn.execute(
-        "SELECT rowid FROM ili_statuses WHERE status = ?",
-        (status,),
-    ).fetchone()[0]
     conn.execute(
-        "INSERT OR IGNORE INTO ilis (id, status_rowid) VALUES (?, ?)",
-        (ili_id, status_rowid),
+        "INSERT OR IGNORE INTO ilis (id, status) VALUES (?, ?)",
+        (ili_id, status),
     )
     row = conn.execute(
         "SELECT rowid FROM ilis WHERE id = ?",
@@ -449,14 +405,12 @@ def get_lexicon_rowid(conn: sqlite3.Connection, lexicon_id: str) -> int | None:
     is the fallback.  Because the editor prevents same-ID multi-version
     coexistence, the bare-ID path will always match at most one row.
     """
-    # Try specifier first (id:version format, indexed)
     row = conn.execute(
         "SELECT rowid FROM lexicons WHERE specifier = ?",
         (lexicon_id,),
     ).fetchone()
     if row:
         return row[0]
-    # Fall back to bare id
     row = conn.execute(
         "SELECT rowid FROM lexicons WHERE id = ?",
         (lexicon_id,),
@@ -470,14 +424,12 @@ def get_lexicon_row(conn: sqlite3.Connection, lexicon_id: str) -> sqlite3.Row | 
     Accepts a bare ID (``"awn"``) or a specifier (``"awn:1.0"``).
     See :func:`get_lexicon_rowid` for resolution strategy.
     """
-    # Try specifier first
     row = conn.execute(
         "SELECT rowid, * FROM lexicons WHERE specifier = ?",
         (lexicon_id,),
     ).fetchone()
     if row:
         return row
-    # Fall back to bare id
     return conn.execute(
         "SELECT rowid, * FROM lexicons WHERE id = ?",
         (lexicon_id,),

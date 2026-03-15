@@ -13,12 +13,14 @@ def record_create(
     entity_type: str,
     entity_id: str,
     new_value: dict | None = None,
+    *,
+    session_id: str | None = None,
 ) -> None:
     """Record a CREATE operation in edit history."""
     conn.execute(
-        "INSERT INTO edit_history (entity_type, entity_id, operation, new_value) "
-        "VALUES (?, ?, 'CREATE', ?)",
-        (entity_type, entity_id, json.dumps(new_value) if new_value else None),
+        "INSERT INTO edit_history (entity_type, entity_id, operation, new_value, session_id) "
+        "VALUES (?, ?, 'CREATE', ?, ?)",
+        (entity_type, entity_id, json.dumps(new_value) if new_value else None, session_id),
     )
 
 
@@ -29,18 +31,21 @@ def record_update(
     field_name: str,
     old_value: str | int | float | bool | None,
     new_value: str | int | float | bool | None,
+    *,
+    session_id: str | None = None,
 ) -> None:
     """Record an UPDATE operation in edit history."""
     conn.execute(
         "INSERT INTO edit_history "
-        "(entity_type, entity_id, field_name, operation, old_value, new_value) "
-        "VALUES (?, ?, ?, 'UPDATE', ?, ?)",
+        "(entity_type, entity_id, field_name, operation, old_value, new_value, session_id) "
+        "VALUES (?, ?, ?, 'UPDATE', ?, ?, ?)",
         (
             entity_type,
             entity_id,
             field_name,
             json.dumps(old_value),
             json.dumps(new_value),
+            session_id,
         ),
     )
 
@@ -50,12 +55,14 @@ def record_delete(
     entity_type: str,
     entity_id: str,
     old_value: dict | None = None,
+    *,
+    session_id: str | None = None,
 ) -> None:
     """Record a DELETE operation in edit history."""
     conn.execute(
-        "INSERT INTO edit_history (entity_type, entity_id, operation, old_value) "
-        "VALUES (?, ?, 'DELETE', ?)",
-        (entity_type, entity_id, json.dumps(old_value) if old_value else None),
+        "INSERT INTO edit_history (entity_type, entity_id, operation, old_value, session_id) "
+        "VALUES (?, ?, 'DELETE', ?, ?)",
+        (entity_type, entity_id, json.dumps(old_value) if old_value else None, session_id),
     )
 
 
