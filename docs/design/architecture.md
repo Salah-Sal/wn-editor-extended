@@ -244,6 +244,18 @@ WordnetEditorError (base)
 
 ## 1.8 — Implementation Patterns
 
+### Connection Setup
+
+Every connection established by `db.connect()` applies three PRAGMA settings:
+
+```python
+conn.execute("PRAGMA foreign_keys = ON")
+conn.execute("PRAGMA busy_timeout = 5000")
+conn.execute("PRAGMA journal_mode = WAL")   # file-backed databases only
+```
+
+`busy_timeout = 5000` causes a second writer to wait up to 5 seconds for the first to finish its transaction, rather than immediately raising `SQLITE_BUSY`. This covers typical brief write transactions (single-entity edits, relation changes) without introducing indefinite blocking. WAL mode provides better read concurrency during export operations. `foreign_keys = ON` is required because SQLite disables foreign key enforcement by default.
+
 ### Mutation Decorator
 
 All public methods that modify the database use a `@_modifies_db` decorator (adopted from `wn-editor-extended`'s pattern). This eliminates transaction and history boilerplate across ~30 mutation methods:

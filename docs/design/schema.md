@@ -10,35 +10,27 @@ This document defines the complete SQLite schema for the editor's independent da
 
 ## 2.1 — Complete DDL
 
-### PRAGMA Settings
+### Connection PRAGMAs
 
-```sql
-PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
-PRAGMA journal_mode = WAL;   -- file-backed databases only; skipped for :memory:
+Set on every connection by `db.connect()` (not part of the DDL string):
+
+```python
+conn.execute("PRAGMA foreign_keys = ON")
+conn.execute("PRAGMA busy_timeout = 5000")
+conn.execute("PRAGMA journal_mode = WAL")   # file-backed databases only
 ```
 
-**Rationale**: `WAL` provides better read concurrency during export operations (reads don't block writes). `foreign_keys` ensures referential integrity on every connection. `busy_timeout = 5000` causes a second writer to wait up to 5 seconds before raising `SQLITE_BUSY`, rather than failing immediately — this supports the use case where two processes briefly contend on the same database file.
-
-### Meta Table
+### DDL (verbatim from `db.py` `_DDL`)
 
 ```sql
+-- Meta table
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT NOT NULL,
     value TEXT,
     UNIQUE (key)
 );
-```
 
-Stores schema version for compatibility checks. On initialization:
-```sql
-INSERT OR IGNORE INTO meta VALUES ('schema_version', '2.0');
-INSERT OR IGNORE INTO meta VALUES ('created_at', strftime('%Y-%m-%dT%H:%M:%f', 'now'));
-```
-
-### Lookup Tables
-
-```sql
+-- Lookup tables
 CREATE TABLE IF NOT EXISTS relation_types (
     rowid INTEGER PRIMARY KEY,
     type TEXT NOT NULL,
@@ -50,11 +42,8 @@ CREATE TABLE IF NOT EXISTS lexfiles (
     name TEXT NOT NULL,
     UNIQUE (name)
 );
-```
 
-### ILI Table
-
-```sql
+-- ILI table
 CREATE TABLE IF NOT EXISTS ilis (
     rowid INTEGER PRIMARY KEY,
     id TEXT NOT NULL,
@@ -64,11 +53,8 @@ CREATE TABLE IF NOT EXISTS ilis (
     metadata META,
     UNIQUE (id)
 );
-```
 
-### Lexicon Tables
-
-```sql
+-- Lexicon tables
 CREATE TABLE IF NOT EXISTS lexicons (
     rowid INTEGER PRIMARY KEY,
     specifier TEXT NOT NULL,
@@ -106,11 +92,8 @@ CREATE TABLE IF NOT EXISTS lexicon_extensions (
     UNIQUE (extension_rowid, base_rowid)
 );
 CREATE INDEX IF NOT EXISTS lexicon_extension_index ON lexicon_extensions(extension_rowid);
-```
 
-### Lexical Entry Tables
-
-```sql
+-- Entry tables
 CREATE TABLE IF NOT EXISTS entries (
     rowid INTEGER PRIMARY KEY,
     id TEXT NOT NULL,
@@ -156,11 +139,8 @@ CREATE TABLE IF NOT EXISTS tags (
     category TEXT
 );
 CREATE INDEX IF NOT EXISTS tag_form_index ON tags (form_rowid);
-```
 
-### Synset Tables
-
-```sql
+-- Synset tables
 CREATE TABLE IF NOT EXISTS synsets (
     rowid INTEGER PRIMARY KEY,
     id TEXT NOT NULL,
@@ -210,11 +190,8 @@ CREATE TABLE IF NOT EXISTS synset_examples (
     metadata META
 );
 CREATE INDEX IF NOT EXISTS synset_example_rowid_index ON synset_examples(synset_rowid);
-```
 
-### Sense Tables
-
-```sql
+-- Sense tables
 CREATE TABLE IF NOT EXISTS senses (
     rowid INTEGER PRIMARY KEY,
     id TEXT NOT NULL,
@@ -274,11 +251,8 @@ CREATE TABLE IF NOT EXISTS counts (
     metadata META
 );
 CREATE INDEX IF NOT EXISTS count_index ON counts(sense_rowid);
-```
 
-### Syntactic Behaviour Tables
-
-```sql
+-- Syntactic behaviour tables
 CREATE TABLE IF NOT EXISTS syntactic_behaviours (
     rowid INTEGER PRIMARY KEY,
     id TEXT,
@@ -297,11 +271,8 @@ CREATE INDEX IF NOT EXISTS syntactic_behaviour_sense_sb_index
     ON syntactic_behaviour_senses (syntactic_behaviour_rowid);
 CREATE INDEX IF NOT EXISTS syntactic_behaviour_sense_sense_index
     ON syntactic_behaviour_senses (sense_rowid);
-```
 
-### Editor-Specific Table: Edit History
-
-```sql
+-- Edit history
 CREATE TABLE IF NOT EXISTS edit_history (
     rowid INTEGER PRIMARY KEY,
     entity_type TEXT NOT NULL CHECK( entity_type IN ('lexicon','synset','entry','sense','relation','definition','example','form','ili') ),
