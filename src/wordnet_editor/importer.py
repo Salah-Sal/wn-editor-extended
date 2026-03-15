@@ -526,16 +526,22 @@ def _import_lexicon(
     meta = lex.get("meta")
     meta_json = json.dumps(meta) if meta else None
 
-    conn.execute(
-        "INSERT INTO lexicons "
-        "(specifier, id, label, language, email, license, version, "
-        "url, citation, logo, metadata, modified) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-        (specifier, lex_id, lex["label"], lex["language"],
-         lex["email"], lex["license"], version,
-         lex.get("url") or None, lex.get("citation") or None,
-         lex.get("logo") or None, meta_json),
-    )
+    try:
+        conn.execute(
+            "INSERT INTO lexicons "
+            "(specifier, id, label, language, email, license, version, "
+            "url, citation, logo, metadata, modified) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            (specifier, lex_id, lex["label"], lex["language"],
+             lex["email"], lex["license"], version,
+             lex.get("url") or None, lex.get("citation") or None,
+             lex.get("logo") or None, meta_json),
+        )
+    except sqlite3.IntegrityError as exc:
+        raise DuplicateEntityError(
+            f"Lexicon {lex_id}:{version} already exists "
+            f"(concurrent insert detected)"
+        ) from exc
     lex_rowid = conn.execute(
         "SELECT rowid FROM lexicons WHERE specifier = ?", (specifier,)
     ).fetchone()[0]

@@ -149,6 +149,40 @@ with WordnetEditor.from_wn("oewn:2024", "edits.db") as ed:
     ed.export_lmf("ewn_edited.xml")
 ```
 
+### Independent editing (multiple users or pipelines)
+
+Each `from_wn()` or `from_lmf()` call copies data into its **own SQLite file**. The source is never mutated, so multiple users (or pipelines) can work on the same WordNet independently — each gets a fully isolated database.
+
+```python
+import wn
+wn.download("ewn:2024")
+
+# Three users, three separate databases — zero interference
+alice = WordnetEditor.from_wn("oewn:2024", "alice_edits.db")
+bob   = WordnetEditor.from_wn("oewn:2024", "bob_edits.db")
+carol = WordnetEditor.from_wn("oewn:2024", "carol_edits.db")
+
+# Each editor is fully independent
+alice.add_definition(some_synset_id, "Alice's new definition")
+bob.delete_synset(other_synset_id, cascade=True)
+carol.create_synset("oewn", "n", definition="Carol's new concept")
+
+# Export independently
+alice.export_lmf("alice_output.xml")
+bob.export_lmf("bob_output.xml")
+carol.export_lmf("carol_output.xml")
+```
+
+```
+wn library store (read-only, never mutated)
+     │
+     ├── from_wn() ──▶ alice_edits.db  ──▶ alice_output.xml
+     ├── from_wn() ──▶ bob_edits.db    ──▶ bob_output.xml
+     └── from_wn() ──▶ carol_edits.db  ──▶ carol_output.xml
+```
+
+This also works with `from_lmf()` — each call creates a separate database from the same XML source.
+
 ### Batch operations
 
 ```python

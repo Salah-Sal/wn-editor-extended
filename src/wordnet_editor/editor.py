@@ -125,7 +125,7 @@ class WordnetEditor:
         self._batch_depth += 1
         if self._batch_depth == 1:
             self._in_batch = True
-            self._conn.execute("BEGIN")
+            self._conn.execute("BEGIN IMMEDIATE")
         try:
             yield
         except BaseException:
@@ -850,6 +850,10 @@ class WordnetEditor:
             )
 
         if metadata is not _UNSET:
+            _hist.record_update(
+                self._conn, "entry", entry_id, "metadata",
+                str(row["metadata"]), str(metadata),
+            )
             self._conn.execute(
                 "UPDATE entries SET metadata = ? WHERE rowid = ?",
                 (json.dumps(metadata) if metadata else None, entry_rowid),
