@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import xml.etree.ElementTree
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,8 @@ def import_from_lmf(
 
     try:
         resource = wn.lmf.load(str(source))
-    except Exception as e:
+    except (ValueError, KeyError, TypeError, OSError,
+            xml.etree.ElementTree.ParseError, wn.lmf.LMFError) as e:
         raise DataImportError(f"Failed to parse XML: {e}") from e
 
     _import_resource(conn, resource, record_history=record_history)  # type: ignore[arg-type]
@@ -1035,4 +1037,4 @@ def _apply_overrides(
             f"UPDATE lexicons SET {set_clauses} WHERE rowid = ?",
             params,
         )
-        conn.commit()
+
