@@ -25,8 +25,8 @@ from wordnet_editor import WordnetEditor
 
 # Start from an existing WordNet
 import wn
-wn.download("ewn:2024")
-editor = WordnetEditor.from_wn("ewn:2024", "my_edits.db")
+wn.download("ewn:2024")  # download project "ewn:2024"
+editor = WordnetEditor.from_wn("oewn:2024", "my_edits.db")  # lexicon ID is "oewn"
 
 # Or from a WN-LMF XML file
 editor = WordnetEditor.from_lmf("wordnet.xml", "my_edits.db")
@@ -45,18 +45,22 @@ with WordnetEditor("my_edits.db") as editor:
         version="1.0",
     )
 
-    # Create a synset with its definition
-    ss = editor.create_synset(
+    # Create synsets with definitions
+    animal = editor.create_synset(
+        lexicon_id="mylex", pos="n",
+        definition="A living organism that feeds on organic matter",
+    )
+    cat = editor.create_synset(
         lexicon_id="mylex", pos="n",
         definition="A small domesticated carnivorous mammal",
     )
 
     # Create an entry with a sense
     entry = editor.create_entry(lexicon_id="mylex", lemma="cat", pos="n")
-    sense = editor.add_sense(entry_id=entry.id, synset_id=ss.id)
+    sense = editor.add_sense(entry_id=entry.id, synset_id=cat.id)
 
     # Add relations (inverse auto-created)
-    editor.add_synset_relation(ss.id, "hypernym", other_ss.id)
+    editor.add_synset_relation(cat.id, "hypernym", animal.id)
 
     # Validate
     results = editor.validate()
@@ -132,7 +136,7 @@ with WordnetEditor("my.db") as ed:
 import wn
 wn.download("ewn:2024")
 
-with WordnetEditor.from_wn("ewn:2024", "edits.db") as ed:
+with WordnetEditor.from_wn("oewn:2024", "edits.db") as ed:
     # Find and update
     results = ed.find_synsets(definition_contains="feline")
     ed.add_definition(results[0].id, "A cat-like animal", language="en")
