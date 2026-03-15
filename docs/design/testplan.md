@@ -32,7 +32,7 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 
 ### TP-INIT-005: from_wn with valid lexicon
 - **Setup**: `wn.download("ewn:2024")` (or use fixture XML via `wn.add()`)
-- **Action**: `WordnetEditor.from_wn("ewn:2024")`
+- **Action**: `WordnetEditor.from_wn("oewn:2024")`
 - **Verify**: Editor DB has lexicon, entries, synsets, senses
 
 ### TP-INIT-006: from_wn with invalid lexicon
@@ -437,7 +437,7 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 - **Verify B**: Raises `DuplicateEntityError` — the same-ID guard applies regardless of version
 
 ### TP-RT-006: Minimal-diff fidelity test
-- **Setup**: Import a large WordNet (e.g., OEWN) via `from_wn("ewn:2024")`
+- **Setup**: Import a large WordNet (e.g., OEWN) via `from_wn("oewn:2024")`
 - **Action**: Change only the version string via `update_lexicon(lexicon_id, version="2024-test")`, then `export_lmf("out.xml")`
 - **Verify**: XML diff between original and exported is only the version string and specifier. All synsets, entries, senses, relations, definitions, examples, ILI mappings, pronunciations, tags, counts, lexfile names, and metadata are preserved byte-for-byte.
 - **Marker**: `@pytest.mark.slow` (requires large WordNet download)
@@ -489,7 +489,7 @@ Structured test scenarios for every API method. Each scenario is precise enough 
 
 ### TP-INTEG-005: from_wn with metadata overrides
 - **Setup**: `wn.download("ewn:2024")` (or fixture).
-- **Action**: `WordnetEditor.from_wn("ewn:2024", version="2024-custom", label="My EWN")`
+- **Action**: `WordnetEditor.from_wn("oewn:2024", version="2024-custom", label="My EWN")`
 - **Verify**: `editor.get_lexicon(lexicon_id).version == "2024-custom"`. `editor.get_lexicon(lexicon_id).label == "My EWN"`. Original data (synsets, entries, senses) fully preserved.
 
 ---

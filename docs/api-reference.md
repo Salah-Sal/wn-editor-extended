@@ -21,7 +21,7 @@ Open or create a WordNet editing database.
 Supports the context manager protocol:
 
 ```python
-with WordnetEditor("my.db") as editor:
+with WordnetEditor("wn_editor.db") as editor:
     ...
 # connection closed automatically
 ```
@@ -585,7 +585,7 @@ Create an editor pre-loaded from the `wn` library.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `lexicon` | `str` | Lexicon specifier (e.g. `"ewn:2024"`). |
+| `lexicon` | `str` | Lexicon ID specifier (e.g. `"oewn:2024"`). |
 | `db_path` | `str \| Path` | Editor database path. |
 | `record_history` | `bool` | Record import in edit history. |
 | `version` | `str \| None` | Override imported version. |

@@ -26,7 +26,7 @@ The main entry point. One instance manages one editor database.
 
 **Example**:
 ```python
-editor = WordnetEditor("my_wordnet.db")
+editor = WordnetEditor("wn_editor.db")
 editor = WordnetEditor()  # in-memory
 ```
 
@@ -35,7 +35,7 @@ editor = WordnetEditor()  # in-memory
 **Description**: Create an editor database pre-populated with data from the `wn` library's database. Optionally override metadata fields to create a derivative work.
 
 **Parameters**:
-- `lexicon` — Lexicon specifier string (e.g., `"ewn:2024"`, `"omw-en31:1.4"`). Must match a lexicon in `wn`'s database.
+- `lexicon` — Lexicon specifier string (e.g., `"oewn:2024"`, `"omw-en31:1.4"`). Must match a lexicon ID in `wn`'s database (note: this is the lexicon ID, not the download project name).
 - `db_path` — Path for the editor database.
 - `record_history` — If True (default), record CREATE entries in `edit_history` for each imported entity. Set to False for large bulk imports to improve performance.
 - `version` — Override the imported lexicon's version string. Useful for derivative works.
@@ -64,11 +64,11 @@ import wn
 wn.download("ewn:2024")
 
 # Simple import
-editor = WordnetEditor.from_wn("ewn:2024", "ewn_edit.db")
+editor = WordnetEditor.from_wn("oewn:2024", "wn_editor.db")
 
 # Derivative work with overrides
 editor = WordnetEditor.from_wn(
-    "ewn:2024", "my_ewn.db",
+    "oewn:2024", "wn_editor.db",
     version="2024-custom",
     label="My Custom EWN",
     email="me@example.com",
@@ -92,7 +92,7 @@ editor = WordnetEditor.from_wn(
 
 **Example**:
 ```python
-editor = WordnetEditor.from_lmf("wordnet.xml", "edit.db")
+editor = WordnetEditor.from_lmf("wordnet.xml", "wn_editor.db")
 ```
 
 ### `close()`
@@ -102,7 +102,7 @@ editor = WordnetEditor.from_lmf("wordnet.xml", "edit.db")
 ### Context Manager Support
 
 ```python
-with WordnetEditor("my.db") as editor:
+with WordnetEditor("wn_editor.db") as editor:
     editor.create_synset(...)
 # connection automatically closed
 ```

@@ -26,17 +26,17 @@ from wordnet_editor import WordnetEditor
 # Start from an existing WordNet
 import wn
 wn.download("ewn:2024")  # download project "ewn:2024"
-editor = WordnetEditor.from_wn("oewn:2024", "my_edits.db")  # lexicon ID is "oewn"
+editor = WordnetEditor.from_wn("oewn:2024", "wn_editor.db")  # lexicon ID is "oewn"
 
 # Or from a WN-LMF XML file
-editor = WordnetEditor.from_lmf("wordnet.xml", "my_edits.db")
+editor = WordnetEditor.from_lmf("wordnet.xml", "wn_editor.db")
 
 # Or start from scratch
-editor = WordnetEditor("my_edits.db")
+editor = WordnetEditor("wn_editor.db")
 ```
 
 ```python
-with WordnetEditor("my_edits.db") as editor:
+with WordnetEditor("wn_editor.db") as editor:
     # Create a lexicon
     lex = editor.create_lexicon(
         id="mylex", label="My Lexicon",
@@ -114,7 +114,7 @@ pytest
 ### Build a WordNet from scratch
 
 ```python
-with WordnetEditor("my.db") as ed:
+with WordnetEditor("wn_editor.db") as ed:
     ed.create_lexicon(id="acme", label="ACME WordNet",
                       language="en", email="team@acme.org",
                       license="https://creativecommons.org/licenses/by/4.0/",
