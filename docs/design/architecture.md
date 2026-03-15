@@ -1,14 +1,14 @@
 # Architecture Design Document
 
 **Library**: `wordnet-editor`
-**Version**: 1.0
-**Date**: 2026-02-16
+**Version**: 2.0
+**Date**: 2026-03-15
 
 ---
 
 ## 1.1 — System Overview
 
-`wordnet-editor` is a pip-installable pure Python library that provides a complete programmatic API for editing WordNets. It maintains its own independent SQLite database — never mutating the `wn` library's store — and supports all CRUD operations on synsets, lexical entries, senses, definitions, examples, and relations. The library automatically maintains inverse relations, supports compound operations (merge, split, move), includes a validation engine, tracks edit history, and exports valid WN-LMF 1.4 XML that can be re-imported into `wn`. It targets single-user batch editing workflows. `WordnetEditor` instances are not thread-safe — use one instance per thread. If two processes open the same `editor.db`, SQLite's file-level locking ensures writes are serialized (the second writer blocks until the first commits).
+`wordnet-editor` is a pip-installable pure Python library that provides a complete programmatic API for editing WordNets. It maintains its own independent SQLite database — never mutating the `wn` library's store — and supports all CRUD operations on synsets, lexical entries, senses, definitions, examples, and relations. The library automatically maintains inverse relations, supports compound operations (merge, split, move), includes a validation engine, tracks edit history, and exports valid WN-LMF 1.4 XML that can be re-imported into `wn`. It targets single-user batch editing workflows. `WordnetEditor` instances are not thread-safe — use one instance per thread. If two processes open the same `editor.db`, `PRAGMA busy_timeout = 5000` causes the second writer to wait up to 5 seconds for the first to finish its transaction, rather than failing immediately with `SQLITE_BUSY`.
 
 ---
 
@@ -80,7 +80,7 @@ After `commit_to_wn()`, the data lives in `wn`'s database where users can query 
 | Component | File | Responsibility |
 |-----------|------|----------------|
 | Editor API | `editor.py` | The `WordnetEditor` class. All public methods. Orchestrates database, validation, history, and import/export. |
-| Database Layer | `db.py` | Connection management, DDL initialization, low-level CRUD operations (INSERT, UPDATE, DELETE, SELECT). JSON adapter/converter for META columns. |
+| Database Layer | `db.py` | Connection management (`busy_timeout`, WAL, foreign keys), DDL initialization (schema v2.0), low-level CRUD operations (INSERT, UPDATE, DELETE, SELECT). JSON adapter/converter for META columns. |
 | Domain Models | `models.py` | Frozen dataclasses (`SynsetModel`, `EntryModel`, etc.), enums (`PartOfSpeech`, etc.), `ValidationResult`. |
 | Relations | `relations.py` | `SYNSET_RELATION_INVERSES` and `SENSE_RELATION_INVERSES` dicts. Relation type validation. |
 | Import Pipeline | `importer.py` | `import_from_lmf()` and `import_from_wn()`. Transforms `wn.lmf` TypedDicts into editor DB rows. |
@@ -270,34 +270,34 @@ def _modifies_db(method):
 The `import_from_wn()` method uses a dual-path strategy (adopted from `wn_edit`'s bulk loading approach):
 
 ```python
-def _import_from_wn(self, specifier):
+def import_from_wn(conn, specifier, ...):
     try:
-        return self._import_from_wn_bulk(specifier)  # fast: ~10s for OEWN
-    except (ImportError, AttributeError, sqlite3.OperationalError):
-        return self._import_from_wn_xml(specifier)   # fallback: ~140s for OEWN
+        _import_from_wn_bulk(conn, specifier, ...)   # fast: ~10s for OEWN
+    except Exception:
+        _import_from_wn_xml(conn, specifier, ...)    # fallback: ~140s for OEWN
 ```
 
-The fast path uses `wn._db.connect()` (private API) for ~20 bulk SQL queries. The fallback uses `wn.export()` → temp XML → `wn.lmf.load()`. See `pipeline.md` section 6.2 for details.
+The fast path uses `wn._db.connect()` (private API) for ~20 bulk SQL queries. If the bulk path fails for any reason (API changes, missing private attributes, incompatible schema), the fallback path uses `wn.export()` → temp XML → `wn.lmf.load()`. The broad `except Exception` is intentional: the `wn` library's internal API is undocumented and can fail in unpredictable ways across versions. See `pipeline.md` section 6.2 for details.
 
 ---
 
-## 1.9 — Future Extensions (v2.0+)
+## 1.9 — Future Extensions
 
-These features are not in the v1.0 scope but have been designed to be compatible with the current architecture. They are documented here so that v1.0 implementation decisions don't preclude them.
+These features are not yet implemented but have been designed to be compatible with the current architecture.
 
 ### Rollback Mechanism
 
 **Source**: `wn-editor-extended`'s hook-based changelog with session tracking and rollback support.
 
-The `edit_history` table already captures `old_value` JSON for every UPDATE and DELETE. A future `undo()` or `rollback_to(timestamp)` method could replay these in reverse:
+The `edit_history` table captures `old_value` JSON for every UPDATE and DELETE, and includes a `session_id` column for grouping related edits. A future `undo()` or `rollback_to(session)` method could replay changes in reverse:
 
 ```python
-# Future API (not in v1.0)
-editor.undo()                        # undo last mutation
-editor.rollback_to("2026-02-15T...")  # revert to timestamp
+# Future API (not yet implemented)
+editor.undo()                           # undo last mutation
+editor.rollback_to(session_id="abc123") # revert all changes in session
 ```
 
-**v1.0 preparation**: Ensure `old_value` captures complete pre-mutation state (not partial). Consider adding a `session_id` column to `edit_history` in a future schema migration (see `schema.md` section 2.4).
+**v2.0 preparation**: The `session_id` column is already present in the schema. History recording functions accept an optional `session_id` keyword argument.
 
 ### YAML Batch Editing System
 
