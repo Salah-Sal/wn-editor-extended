@@ -1,0 +1,98 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.0.0] - 2026-03-15
+
+### Changed
+- **Ground-up rewrite** — new package `wordnet_editor` under `src/wordnet_editor/`
+  replaces the legacy `wn_editor/` package
+- Build backend changed from flit to hatchling
+- Requires Python >=3.10 (dropped 3.9)
+- Requires wn >=1.0.0
+
+### Removed
+- Legacy `wn_editor/` package (preserved on `origin/legacy` branch)
+- Legacy test files (`test_synset_editor.py`, `test_sense_editor.py`,
+  `test_entry_form_editor.py`, `test_lexicon_editor.py`, `test_ili_editor.py`,
+  `test_integration.py`, `test_utilities.py`, `test_changelog.py`)
+- Legacy batch example (`examples/batch_changes.yaml`)
+- CI fixed: lint target updated to `src/wordnet_editor/`, build uses
+  `python -m build` (hatchling), Python 3.9 removed from matrix
+
+## [0.7.0] - 2026-01-13
+
+### Added
+- **Batch change request system** - New `batch` module for submitting bulk WordNet modifications via YAML
+  - `load_change_request()` - Load changes from YAML file, string, or dict
+  - `validate_change_request()` - Validate schema and referential integrity
+  - `execute_change_request()` - Apply changes with optional dry-run mode
+  - 13 supported operations: `create_synset`, `add_word`, `delete_word`, `add_definition`, `modify_definition`, `delete_definition`, `add_example`, `delete_example`, `set_pos`, `add_relation`, `delete_relation`, `set_ili`, `delete_ili`
+  - 28 relation types supported with user-friendly names (e.g., `hypernym` instead of ID `15`)
+  - Full integration with change tracking for rollback support
+- **`wn-batch` CLI tool** - Command-line interface for batch operations
+  - `wn-batch validate <file>` - Validate a YAML change request
+  - `wn-batch apply <file>` - Apply changes (with `--dry-run`, `--yes` options)
+  - `wn-batch history` - View execution history
+  - `wn-batch rollback <session_id>` - Rollback a batch session
+  - `wn-batch show <session_id>` - Show session details
+- **Change tracking system** - New `changelog` module for recording all database modifications
+  - `enable_tracking()` / `disable_tracking()` - Control change tracking
+  - `tracking_session()` - Context manager for grouping related changes
+  - `start_session()` / `end_session()` - Manual session management
+  - `get_session_history()` - Query past sessions with change counts
+  - `get_changes()` - Query change history with filtering options
+  - `get_change_by_id()` - Retrieve specific change details
+- **Per-change rollback** - Undo individual or grouped changes
+  - `rollback_change()` - Undo a single INSERT, UPDATE, or DELETE operation
+  - `rollback_session()` - Undo all changes in a session (reverse order)
+  - `can_rollback()` - Check if a change can be rolled back
+- **History maintenance**
+  - `prune_history()` - Delete old change records
+- **Hook system** for integrating change tracking with editors
+  - `set_changelog_hooks()` / `clear_changelog_hooks()` in `editor` module
+- New `Session` and `Change` dataclasses for type-safe history access
+- Separate changelog database (`~/.wn_changelog.db`) to avoid modifying WordNet schema
+- 25 new tests for changelog functionality
+
+## [0.6.1] - 2025-01-10
+
+### Fixed
+- Fixed `get_wordnet_overview()` to handle None rowid and use correct lexicon string format for `get_modified()`
+- Fixed `mod_definition()` to query database directly instead of using `get_definitions()` which expects synset ID strings
+- Fixed `FormEditor.__init__()` to properly validate input types with elif and raise TypeError for invalid inputs
+- Fixed `add_syntactic_behaviour()` to check for None sense before calling SenseEditor
+- Fixed `set_relation_to_synset()` and `delete_relation_to_synset()` source/target parameter order
+- Fixed `delete_syntactic_behaviour()` missing `conn.commit()`
+- Fixed `delete_pronunciation()` to include `self.row_id` in query parameters
+- Fixed `create_sense()` to use keyword arguments when calling SenseEditor
+- Fixed `RelationType` enum values to match the actual wn database relation_types table (all 27 values corrected)
+
+### Added
+- Comprehensive test suite with 109 tests covering all editor functionality
+
+## [0.6.0] - 2025-01-10
+
+### Added
+- `SynsetEditor.set_pos(pos)` method to set part of speech on synsets
+- `SynsetEditor.add_word(word, pos=None)` now accepts optional `pos` parameter
+- POS is automatically set on both synset and entry when provided
+
+### Fixed
+- `FormEditor._create()` now sets `rank=0` instead of NULL, fixing issue where newly created terms couldn't be found by `wn.synsets()`
+- Fixed `_get_valid_entity_id()` to properly handle None from max ID query
+- Fixed `_get_valid_ili_id()` to properly increment ID
+- Fixed `_get_all_lexicon_row_ids()` list comprehension
+- Added missing `conn.commit()` in `ILIEditor._create()`
+
+### Changed
+- Package renamed to `wn-editor-extended`
+- Updated Python version support to 3.9-3.12
+- Relaxed `wn` dependency from `==0.9.1` to `>=0.9.1`
+
+## [0.5.4] - Previous releases
+
+See original [wn-editor](https://github.com/Hypercookie/wn-editor) for previous history.

@@ -499,28 +499,15 @@ automatically in sync.
 
 ---
 
-## 19. Legacy `wn_editor/` Directory Contains Only `.pyc` Artifacts
+## 19. ~~Legacy `wn_editor/` Directory~~ ✅ Resolved
 
 **Severity:** Low — cleanup item, no functional impact.
 
-**Description:** The `wn_editor/` directory at the repo root contains only
-compiled `.pyc` bytecode files with no corresponding source:
-
-```
-wn_editor/__pycache__/changelog.cpython-312.pyc
-wn_editor/__pycache__/editor.cpython-312.pyc
-wn_editor/__pycache__/__init__.cpython-312.pyc
-wn_editor/batch/__pycache__/executor.cpython-312.pyc
-wn_editor/batch/__pycache__/parser.cpython-312.pyc
-wn_editor/batch/__pycache__/schema.cpython-312.pyc
-wn_editor/batch/__pycache__/validator.cpython-312.pyc
-```
-
-These are artifacts from the pre-v1.0 rewrite (source lives on the `legacy`
-branch). They are not importable by the current package and serve no purpose.
-Additionally, `tests/__pycache__/` contains ~28 stale `.pyc` files referencing
-deleted test modules.
-
-**Fix approach:** Delete the `wn_editor/` directory and the stale
-`tests/__pycache__/` files. Add `__pycache__/` to `.gitignore` if not already
-present.
+**Status:** Resolved (2026-03-15). The `wn_editor/` directory contained full
+legacy source files (~4,400 lines across 10 `.py` files), not just `.pyc`
+artifacts as originally stated. The directory and all 8 legacy test files
+(`test_synset_editor.py`, `test_sense_editor.py`, `test_entry_form_editor.py`,
+`test_lexicon_editor.py`, `test_ili_editor.py`, `test_integration.py`,
+`test_utilities.py`, `test_changelog.py`) have been deleted. The legacy source
+is preserved on `remotes/origin/legacy`. CI updated to lint `src/wordnet_editor/`
+and use `hatchling` (matching `pyproject.toml`).
